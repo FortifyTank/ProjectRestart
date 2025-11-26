@@ -43,23 +43,46 @@ public class BattleManager : MonoBehaviour
         // 1. Load the CSV Database
         PokemonDatabase.LoadData();
 
-        // 2. GET POKEMON (Updated)
-        // "myPokemon" comes from what we clicked in the Pokedex
-        // "enemyPokemon" is temporary placeholder until we receive BATTLE_SETUP from opponent
-        
+        // --- [NEW] SPECTATOR LOGIC ---
+        if (networkManager.isSpectator)
+        {
+            Debug.Log("Spectator Mode Active: Initializing View...");
+
+            // 1. Create dummies so the UI doesn't crash (Wait for network updates to fill real data)
+            myPokemon = PokemonDatabase.GetPokemon("Bulbasaur");
+            enemyPokemon = PokemonDatabase.GetPokemon("Charmander");
+
+            // 2. Disable Controls completely
+            SetButtonsInteractable(false);
+            
+            // Optional: Hide the button area entirely so it looks like a TV stream
+            if (moveButtons.Length > 0 && moveButtons[0] != null)
+            {
+                foreach(var btn in moveButtons) 
+            {
+                if(btn != null) btn.gameObject.SetActive(false);
+            }
+            }
+
+            // 3. Update UI with dummies
+            UpdateBattleUI();
+            
+            // 4. IMPORTANT: Return immediately. Spectators do NOT send BATTLE_SETUP packets.
+            return; 
+        }
+        // -----------------------------
+
+        // 2. GET POKEMON (Standard Player Logic)
         string myName = PokemonSelector.UserSelection; 
         
-        // Safety check
         if (string.IsNullOrEmpty(myName) || PokemonDatabase.GetPokemon(myName) == null)
         {
-            myName = "Pikachu"; // Fallback
+            myName = "Pikachu"; 
             Debug.LogWarning("Invalid selection, defaulting to Pikachu");
         }
 
         Pokemon p1 = PokemonDatabase.GetPokemon(myName);
-        
-        // For now, we just create a dummy enemy. 
-        // The actual enemy data will be overwritten when the UDP handshake finishes.
+        // Dummy enemy for now
         Pokemon p2 = PokemonDatabase.GetPokemon("Bulbasaur"); 
 
         if (isHost)
@@ -70,19 +93,17 @@ public class BattleManager : MonoBehaviour
         }
         else
         {
-            myPokemon = p2; // This logic is tricky in P2P, but we will fix it in the Networking step
+            myPokemon = p2; 
             enemyPokemon = p1;
             SetButtonsInteractable(false);
         }
         
-        // IMPORTANT: Actually set the objects
-        // In P2P, "myPokemon" is always the one controlled by this client.
         myPokemon = p1;
         enemyPokemon = p2;
 
         UpdateBattleUI();
         
-        // Send my chosen pokemon name to the opponent
+        // Standard Players send their info
         if (networkManager != null) networkManager.SendBattleSetup(myPokemon.name);
     }
 
@@ -117,15 +138,26 @@ public class BattleManager : MonoBehaviour
         string moveName = myPokemon.moves[moveIndex];
         lastMoveUsedByMe = moveName;
         
+        // Consistent format: "Charizard used Tackle!"
+        networkManager.AddChatMessage("Battle", $"{myPokemon.name} used {moveName}!");
+        
         if (networkManager != null) networkManager.SendAttackAnnounce(moveName);
         SetButtonsInteractable(false);
     }
-
     public void OnOpponentAttackAnnounce(string moveName)
     {
+        // SPECTATOR: Just say a move happened (Since we can't be 100% sure who sent it without checking IP)
+        if (networkManager.isSpectator) 
+        {
+            networkManager.AddChatMessage("Battle", $"A Pokemon used {moveName}!");
+            return;
+        }
+        
+        // PLAYER: Say the specific enemy name
+        networkManager.AddChatMessage("Battle", $"{enemyPokemon.name} used {moveName}!");
+
         if (isGameOver) return;
         pendingMoveName = moveName;
-        // RFC Step: Acknowledge attack
         if (networkManager != null) networkManager.SendDefenseAnnounce();
     }
 
@@ -149,17 +181,35 @@ public class BattleManager : MonoBehaviour
         }
     }
 
-    public void OnCalculationReport(int damageDealt, int hpRemaining)
-    {
+    public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining)
+    {   
+        // --- SPECTATOR LOGIC ---
+        if (networkManager.isSpectator) 
+        {
+            // Determine who got hit based on who attacked
+            if (attackerName == myPokemon.name) 
+            {
+                // Host Attacked -> Joiner (Enemy) took damage
+                enemyPokemon.hp = hpRemaining;
+                if(enemyHpBar != null) enemyHpBar.value = hpRemaining;
+            }
+            else if (attackerName == enemyPokemon.name)
+            {
+                // Joiner Attacked -> Host (My) took damage
+                myPokemon.hp = hpRemaining;
+                if(playerHpBar != null) playerHpBar.value = hpRemaining;
+            }
+            return; 
+        }
+        // -----------------------
+
         if (isGameOver) return;
 
         // If I have a pending move (I am the defender)
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
-            // RFC Step: Independent verification
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
             
-            // Discrepancy Check
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
             {
                 Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
@@ -181,7 +231,7 @@ public class BattleManager : MonoBehaviour
                 if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                 OnGameOver(enemyPokemon.name);
             }
-            else SetButtonsInteractable(true); // Turn flip
+            else SetButtonsInteractable(true); 
         }
         else
         {
@@ -200,14 +250,27 @@ public class BattleManager : MonoBehaviour
 
     public void OnGameOver(string winner)
     {
+        if (isGameOver) return;
         isGameOver = true;
         SetButtonsInteractable(false);
-        Debug.Log($"GAME OVER! Winner: {winner}");
-        if (playerNameText != null) playerNameText.text += (winner == myPokemon.name) ? " (WINNER)" : " (FAINTED)";
-        if (enemyNameText != null) enemyNameText.text += (winner == enemyPokemon.name) ? " (WINNER)" : " (FAINTED)";
+        
+        // 1. Print to Chat (Crucial for Spectators)
+        networkManager.AddChatMessage("System", $"GAME OVER! Winner: {winner}");
+
+        // 2. Update Top Labels
+        if (playerNameText != null) 
+        {
+            if(winner == myPokemon.name) playerNameText.text += " (WINNER)";
+            else playerNameText.text += " (FAINTED)";
+        }
+        
+        if (enemyNameText != null) 
+        {
+            if(winner == enemyPokemon.name) enemyNameText.text += " (WINNER)";
+            else enemyNameText.text += " (FAINTED)";
+        }
     }
 
-    // --- RFC 6: DAMAGE CALCULATION ---
     // --- RFC 6: DAMAGE CALCULATION ---
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
     {
@@ -279,6 +342,26 @@ public class BattleManager : MonoBehaviour
         else
         {
             Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
+        }
+    }
+
+    public string GetMyPokemonName() 
+    { 
+        return myPokemon != null ? myPokemon.name : "Unknown"; 
+    }
+
+    public string GetEnemyPokemonName() 
+    { 
+        return enemyPokemon != null ? enemyPokemon.name : "Unknown"; 
+    }
+
+    public void SetMyPokemon(string pokemonName)
+    {
+        Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
+        if (p != null)
+        {
+            myPokemon = p;
+            UpdateBattleUI();
         }
     }
 }
