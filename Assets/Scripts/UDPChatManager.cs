@@ -31,6 +31,9 @@ public class UDPChatManager : MonoBehaviour
     public int chatPort = 8000;
     public int broadcastPort = 8001;
 
+    [Header("Debug")]
+    public bool verboseMode = true; // Set this to true in Inspector to see logs
+
     // --- RELIABILITY SETTINGS ---
     private const float RETRY_INTERVAL = 0.5f; // 500ms
     private const int MAX_RETRIES = 5;
@@ -257,11 +260,12 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft)
+    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft, int attackerHpLeft) // <--- Add argument
     {
         string payload = $"message_type: CALCULATION_REPORT\n" +
                          $"attacker: {attackerName}\n" +
                          $"move_used: {moveUsed}\n" +
+                         $"remaining_health: {attackerHpLeft}\n" + // <--- ADDED THIS LINE
                          $"damage_dealt: {damage}\n" +
                          $"defender_hp_remaining: {hpLeft}\n" +
                          $"status_message: Effective\n" +
@@ -341,6 +345,11 @@ public class UDPChatManager : MonoBehaviour
 
         int seq = int.Parse(ParseValue(payload, "sequence_number"));
         
+        if (verboseMode) 
+        {
+            Debug.Log($"<color=orange>[SENDING]</color> to {targetIP}:\n{payload}\n----------------");
+        }
+
         pendingPackets.Add(new PendingPacket 
         { 
             sequenceNumber = seq, 
@@ -382,6 +391,11 @@ public class UDPChatManager : MonoBehaviour
                 byte[] data = chatClient.Receive(ref remoteEP);
                 string text = Encoding.UTF8.GetString(data);
                 
+                if (verboseMode)
+                {
+                    Debug.Log($"<color=green>[RECEIVED]</color> from {remoteEP.Address}:\n{text}\n----------------");
+                }
+
                 if (isHosting)
                 {
                     targetIP = remoteEP.Address.ToString();
@@ -570,6 +584,15 @@ public class UDPChatManager : MonoBehaviour
         // 1. Decode Base64 string back to Bytes
         byte[] imageBytes = System.Convert.FromBase64String(base64Data);
 
+        // --- NEW: SAVE TO FILE (Rubric Requirement) ---
+        // This saves the image to your computer's AppData folder
+        string fileName = $"Sticker_{System.DateTime.Now.Ticks}.png";
+        string path = System.IO.Path.Combine(Application.persistentDataPath, fileName);
+        System.IO.File.WriteAllBytes(path, imageBytes);
+        
+        if (verboseMode) Debug.Log($"[FILE SAVED] Sticker saved to: {path}");
+        // ----------------------------------------------
+
         // 2. Create a Texture and load bytes
         Texture2D tex = new Texture2D(2, 2);
         tex.LoadImage(imageBytes); 
@@ -577,11 +600,11 @@ public class UDPChatManager : MonoBehaviour
         // 3. Convert Texture to Sprite
         Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
 
-        // 4. Spawn the Sticker Prefab
-        GameObject msgObj = Instantiate(textMessagePrefab, chatContent); // Label for who sent it
+        // 4. Spawn UI
+        GameObject msgObj = Instantiate(textMessagePrefab, chatContent);
         msgObj.GetComponent<TMP_Text>().text = $"<color=blue>{sender}</color> sent a sticker:";
 
-        GameObject imgObj = Instantiate(stickerMessagePrefab, chatContent); // The image itself
+        GameObject imgObj = Instantiate(stickerMessagePrefab, chatContent);
         imgObj.GetComponent<Image>().sprite = sprite;
     }
 }

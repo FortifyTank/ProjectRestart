@@ -133,11 +133,20 @@ public class BattleManager : MonoBehaviour
     {
         if (string.IsNullOrEmpty(lastMoveUsedByMe)) return;
         
-        // I am the attacker, I calculate my damage to report it
+        // Calculate damage
         int damage = PerformAttack(lastMoveUsedByMe, myPokemon, enemyPokemon, enemyHpBar);
         
+        // Send Report (Updated with myPokemon.hp as the 5th argument)
         if (networkManager != null)
-            networkManager.SendCalculationReport(myPokemon.name, lastMoveUsedByMe, damage, enemyPokemon.hp);
+        {
+            networkManager.SendCalculationReport(
+                myPokemon.name,      // Attacker Name
+                lastMoveUsedByMe,    // Move Name
+                damage,              // Damage Dealt
+                enemyPokemon.hp,     // Defender HP Remaining
+                myPokemon.hp         // [NEW] Attacker HP Remaining (Required by RFC)
+            );
+        }
     }
 
     public void OnCalculationReport(int damageDealt, int hpRemaining)
