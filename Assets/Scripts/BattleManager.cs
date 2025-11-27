@@ -40,7 +40,7 @@ public class BattleManager : MonoBehaviour
         if (networkManager == null) networkManager = GetComponent<UDPChatManager>();
         SetButtonsInteractable(false);
         
-        // ===== RFC REQUIREMENT: Setup Boost Button Listeners =====
+        // ===== Setup Boost Button Listeners =====
         if (spAttackBoostButton != null)
         {
             spAttackBoostButton.onClick.AddListener(ActivateSpecialAttackBoost);
@@ -118,7 +118,7 @@ public class BattleManager : MonoBehaviour
         myPokemon = p1;
         enemyPokemon = p2;
 
-        // ===== RFC REQUIREMENT: Allocate Stat Boosts =====
+        // ===== Allocate Stat Boosts =====
         // Players decide how many boosts they want during setup phase
         // For now, using default values (you can add UI for this later)
         myPokemon.specialAttackBoostsRemaining = 5;   // Default: 5 special attack boosts
@@ -162,7 +162,7 @@ public class BattleManager : MonoBehaviour
             else moveButtons[i].gameObject.SetActive(false);
         }
         
-        // ===== RFC REQUIREMENT: Update Boost Counter Displays =====
+        // ===== Update Boost Counter Displays =====
         UpdateBoostDisplay();
         // ==========================================================
     }
@@ -182,7 +182,7 @@ public class BattleManager : MonoBehaviour
         SetButtonsInteractable(false);
     }
     
-    // ===== RFC REQUIREMENT: Boost Activation Methods =====
+    // ===== Boost Activation Methods =====
     /// <summary>
     /// Activates a Special Attack boost for the current turn (if available)
     /// Call this BEFORE selecting a Special move
@@ -254,7 +254,7 @@ public class BattleManager : MonoBehaviour
                 lastMoveUsedByMe,    // Move Name
                 damage,              // Damage Dealt
                 enemyPokemon.hp,     // Defender HP Remaining
-                myPokemon.hp         // [NEW] Attacker HP Remaining (Required by RFC)
+                myPokemon.hp         // [NEW] Attacker HP Remaining 
             );
         }
     }
@@ -311,7 +311,7 @@ public class BattleManager : MonoBehaviour
             }
             else
             {
-                // ===== RFC REQUIREMENT: Reset Boost Multipliers =====
+                // ===== Reset Boost Multipliers =====
                 // Boosts only last for ONE turn, so reset them after damage is applied
                 myPokemon.ResetBoostMultipliers();
                 enemyPokemon.ResetBoostMultipliers();
@@ -327,7 +327,7 @@ public class BattleManager : MonoBehaviour
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
             
-            // ===== RFC REQUIREMENT: Reset Boost Multipliers After Attack =====
+            // =====  Reset Boost Multipliers After Attack =====
             // After attacker's turn completes, reset multipliers for both Pokemon
             myPokemon.ResetBoostMultipliers();
             enemyPokemon.ResetBoostMultipliers();
@@ -365,7 +365,7 @@ public class BattleManager : MonoBehaviour
         }
     }
 
-    // --- RFC 6: DAMAGE CALCULATION ---
+    // --- DAMAGE CALCULATION ---
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
     {
         if (!MoveDatabase.Moves.ContainsKey(moveName)) 
@@ -376,12 +376,12 @@ public class BattleManager : MonoBehaviour
         MoveData move = MoveDatabase.Moves[moveName];
 
         // 1. Determine Stats (Physical vs Special)
-        // RFC: "The formula uses the appropriate attack and defense stats"
+        // "The formula uses the appropriate attack and defense stats"
         bool isPhysical = move.category == "Physical";
         float atkStat = isPhysical ? attacker.attack : attacker.spAttack;
         float defStat = isPhysical ? defender.defense : defender.spDefense;
         
-        // ===== RFC REQUIREMENT: Apply Stat Boosts =====
+        // ===== Apply Stat Boosts =====
         // If boosts are active, multiply the stats by their multipliers
         if (!isPhysical)
         {
@@ -402,13 +402,13 @@ public class BattleManager : MonoBehaviour
         // =============================================
 
         // 2. Type Effectiveness
-        // RFC: Type1Effectiveness x Type2Effectiveness
+        // Type1Effectiveness x Type2Effectiveness
         float type1Mult = TypeChart.GetEffectiveness(move.type, defender.types[0]);
         float type2Mult = (defender.types.Count > 1) ? TypeChart.GetEffectiveness(move.type, defender.types[1]) : 1.0f;
         float totalTypeMult = type1Mult * type2Mult;
 
         // 3. Formula
-        // RFC: Damage = (BasePower * AttackerStat * Type1 * Type2) / DefenderStat
+        //  Damage = (BasePower * AttackerStat * Type1 * Type2) / DefenderStat
         float numerator = move.power * atkStat * totalTypeMult;
         float rawDamage = numerator / defStat;
         
@@ -444,7 +444,7 @@ public class BattleManager : MonoBehaviour
         foreach (var btn in moveButtons) if(btn != null) btn.interactable = state;
     }
     
-    // ===== RFC REQUIREMENT: Update Boost Display UI =====
+    //Update Boost Display UI =====
     /// <summary>
     /// Updates the boost counter text displays and button states
     /// </summary>
@@ -477,7 +477,7 @@ public class BattleManager : MonoBehaviour
     }
     // ====================================================
 
-    // RFC REQUIREMENT: Accept stat boosts from BATTLE_SETUP message
+    // Accept stat boosts from BATTLE_SETUP message
     public void SetOpponentPokemon(string pokemonName, int spAtkBoosts = 5, int spDefBoosts = 5)
     {
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
@@ -509,7 +509,7 @@ public class BattleManager : MonoBehaviour
         return enemyPokemon != null ? enemyPokemon.name : "Unknown"; 
     }
 
-    // RFC REQUIREMENT: Accept stat boosts from BATTLE_SETUP message (for spectators)
+    // Accept stat boosts from BATTLE_SETUP message (for spectators)
     public void SetMyPokemon(string pokemonName, int spAtkBoosts = 5, int spDefBoosts = 5)
     {
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);

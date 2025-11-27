@@ -54,7 +54,7 @@ public class UDPChatManager : MonoBehaviour
     private string targetIP = "";
     private int targetPort = 8000; 
     
-    // [FIX] Monotonically increasing sequence number (RFC Requirement)
+    // [FIX] Monotonically increasing sequence number 
     private int localSequenceNumber = 0;
 
     // Queues
@@ -168,7 +168,7 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
-    // --- RFC MESSAGE ROUTING ---
+    // --- MESSAGE ROUTING ---
     private void HandleBattleMessage(string type, string rawData)
     {
         if (type == "HANDSHAKE_REQUEST")
@@ -187,7 +187,7 @@ public class UDPChatManager : MonoBehaviour
         {
             string pokeName = ParseValue(rawData, "pokemon_name");
             
-            // ===== RFC REQUIREMENT: Parse stat_boosts =====
+            // ===== Parse stat_boosts =====
             string statBoostsStr = ParseValue(rawData, "stat_boosts");
             int spAtkBoosts = 5;  // Default fallback
             int spDefBoosts = 5;  // Default fallback
@@ -283,7 +283,7 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    // RFC REQUIREMENT: Send stat_boosts in BATTLE_SETUP
+    // Send stat_boosts in BATTLE_SETUP
     // stat_boosts are the LIMITED, CONSUMABLE resources players get for the battle
     public void SendBattleSetup(string pokemonName, int spAttackBoosts, int spDefenseBoosts)
     {
@@ -424,7 +424,7 @@ public class UDPChatManager : MonoBehaviour
     private void SendAck(int seqToAck)
     {
         // ACK doesn't need a sequence number itself (or it uses a special one)
-        // RFC 5.1 says "send an ACK message with the corresponding ack_number"
+        //  5.1 says "send an ACK message with the corresponding ack_number"
         string payload = $"message_type: ACK\nack_number: {seqToAck}";
         SendRawBytes(Encoding.UTF8.GetBytes(payload));
     }
@@ -695,7 +695,7 @@ public class UDPChatManager : MonoBehaviour
         return "";
     }
     
-    // ===== RFC HELPER: Parse JSON-like stat_boosts field =====
+    // ===== Parse JSON-like stat_boosts field =====
     // Extracts integer values from: { "special_attack_uses": 5, "special_defense_uses": 5 }
     private int ParseJsonInt(string json, string key, int defaultValue)
     {
