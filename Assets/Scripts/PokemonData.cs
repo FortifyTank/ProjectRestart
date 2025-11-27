@@ -16,6 +16,14 @@ public class Pokemon
     public int speed;
     public List<string> moves;
     
+    // Boost Tracking 
+    public int specialAttackBoostsRemaining;
+    public int specialDefenseBoostsRemaining;
+    
+    // Track ACTIVE boost multiplier
+    public float currentSpAttackMultiplier = 1.0f;
+    public float currentSpDefenseMultiplier = 1.0f;
+    
     public Pokemon(string name, List<string> types, int hp, int atk, int def, int spAtk, int spDef, int spd)
     {
         this.name = name;
@@ -28,7 +36,43 @@ public class Pokemon
         this.spDefense = spDef;
         this.speed = spd;
         this.moves = new List<string>();
+        
+        // set boost counts
+        this.specialAttackBoostsRemaining = 0;
+        this.specialDefenseBoostsRemaining = 0;
     }
+    
+    // Boost Methods
+    public bool UseSpecialAttackBoost()
+    {
+        if (specialAttackBoostsRemaining > 0)
+        {
+            specialAttackBoostsRemaining--;
+            currentSpAttackMultiplier = 1.5f; // 50% boost
+            UnityEngine.Debug.Log($"[BOOST] {name} used Special Attack Boost! ({specialAttackBoostsRemaining} remaining)");
+            return true;
+        }
+        return false;
+    }
+    
+    public bool UseSpecialDefenseBoost()
+    {
+        if (specialDefenseBoostsRemaining > 0)
+        {
+            specialDefenseBoostsRemaining--;
+            currentSpDefenseMultiplier = 1.5f; 
+            UnityEngine.Debug.Log($"[BOOST] {name} used Special Defense Boost! ({specialDefenseBoostsRemaining} remaining)");
+            return true;
+        }
+        return false;
+    }
+
+    public void ResetBoostMultipliers()
+    {
+        currentSpAttackMultiplier = 1.0f;
+        currentSpDefenseMultiplier = 1.0f;
+    }
+
 }
 
 public class MoveDatabase
@@ -50,22 +94,21 @@ public class MoveDatabase
         { "Peck", new MoveData("Flying", "Physical", 35) },
         { "Bite", new MoveData("Dark", "Physical", 60) },
         { "Crunch", new MoveData("Dark", "Physical", 80) },
-        // Add more moves as needed to cover all types if you want!
+
     };
 
-    // [THIS WAS MISSING] Helper to auto-assign moves when loading from CSV
+    //  Helper to auto-assign moves when loading from CSV
     public static List<string> GetMovesForType(string type)
     {
         List<string> learnedMoves = new List<string>();
         
-        // Default move
         learnedMoves.Add("Tackle");
 
         foreach (var move in Moves)
         {
             if (move.Value.type.Equals(type, System.StringComparison.OrdinalIgnoreCase))
             {
-                // [FIX] Only add if we don't have it already
+
                 if (!learnedMoves.Contains(move.Key))
                 {
                     learnedMoves.Add(move.Key);
@@ -96,7 +139,7 @@ public static class TypeChart
 {
     public static float GetEffectiveness(string moveType, string pokemonType)
     {
-        // 1. Normalize inputs to lowercase so "Water" matches "water"
+
         string atk = moveType.ToLower().Trim();
         string def = pokemonType.ToLower().Trim();
 

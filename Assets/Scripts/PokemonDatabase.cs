@@ -85,7 +85,7 @@ public class PokemonDatabase : MonoBehaviour
                     AllPokemon.Add(name, p);
                 }
             }
-            catch (System.Exception e)
+            catch (System.Exception)
             {
                 // This catches weird rows so the whole game doesn't crash
                 // Debug.LogWarning($"Skipping line {i}: {e.Message}");

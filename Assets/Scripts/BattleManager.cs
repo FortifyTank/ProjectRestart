@@ -19,7 +19,13 @@ public class BattleManager : MonoBehaviour
 
     [Header("Controls")]
     public Button[] moveButtons; 
-    public TMP_Text[] moveButtonLabels; 
+    public TMP_Text[] moveButtonLabels;
+    
+    [Header("Stat Boost UI")]
+    public Button spAttackBoostButton;      // Button to activate Special Attack boost
+    public Button spDefenseBoostButton;     // Button to activate Special Defense boost
+    public TMP_Text spAttackBoostText;      // Display: "SpAtk Boosts: 5"
+    public TMP_Text spDefenseBoostText;     // Display: "SpDef Boosts: 5" 
 
     private Pokemon myPokemon;
     private Pokemon enemyPokemon;
@@ -33,6 +39,17 @@ public class BattleManager : MonoBehaviour
     {
         if (networkManager == null) networkManager = GetComponent<UDPChatManager>();
         SetButtonsInteractable(false);
+        
+        // ===== RFC REQUIREMENT: Setup Boost Button Listeners =====
+        if (spAttackBoostButton != null)
+        {
+            spAttackBoostButton.onClick.AddListener(ActivateSpecialAttackBoost);
+        }
+        if (spDefenseBoostButton != null)
+        {
+            spDefenseBoostButton.onClick.AddListener(ActivateSpecialDefenseBoost);
+        }
+        // ========================================================
     }
 
     public void SetupBattle(bool isHost)
@@ -101,10 +118,26 @@ public class BattleManager : MonoBehaviour
         myPokemon = p1;
         enemyPokemon = p2;
 
+        // ===== RFC REQUIREMENT: Allocate Stat Boosts =====
+        // Players decide how many boosts they want during setup phase
+        // For now, using default values (you can add UI for this later)
+        myPokemon.specialAttackBoostsRemaining = 5;   // Default: 5 special attack boosts
+        myPokemon.specialDefenseBoostsRemaining = 5;  // Default: 5 special defense boosts
+        
+        Debug.Log($"[SETUP] Allocated boosts: {myPokemon.specialAttackBoostsRemaining} SpAtk, {myPokemon.specialDefenseBoostsRemaining} SpDef");
+        // =================================================
+
         UpdateBattleUI();
         
-        // Standard Players send their info
-        if (networkManager != null) networkManager.SendBattleSetup(myPokemon.name);
+        // Standard Players send their info (INCLUDING stat boosts)
+        if (networkManager != null)
+        {
+            networkManager.SendBattleSetup(
+                myPokemon.name,
+                myPokemon.specialAttackBoostsRemaining,
+                myPokemon.specialDefenseBoostsRemaining
+            );
+        }
     }
 
     void UpdateBattleUI()
@@ -128,6 +161,10 @@ public class BattleManager : MonoBehaviour
             }
             else moveButtons[i].gameObject.SetActive(false);
         }
+        
+        // ===== RFC REQUIREMENT: Update Boost Counter Displays =====
+        UpdateBoostDisplay();
+        // ==========================================================
     }
 
     // --- BATTLE LOGIC ---
@@ -144,6 +181,47 @@ public class BattleManager : MonoBehaviour
         if (networkManager != null) networkManager.SendAttackAnnounce(moveName);
         SetButtonsInteractable(false);
     }
+    
+    // ===== RFC REQUIREMENT: Boost Activation Methods =====
+    /// <summary>
+    /// Activates a Special Attack boost for the current turn (if available)
+    /// Call this BEFORE selecting a Special move
+    /// </summary>
+    public void ActivateSpecialAttackBoost()
+    {
+        if (isGameOver) return;
+        
+        if (myPokemon.UseSpecialAttackBoost())
+        {
+            networkManager.AddChatMessage("System", $"{myPokemon.name} used Special Attack Boost! ({myPokemon.specialAttackBoostsRemaining} remaining)");
+            UpdateBoostDisplay();  // Refresh UI
+        }
+        else
+        {
+            networkManager.AddChatMessage("System", $"{myPokemon.name} has no Special Attack boosts left!");
+        }
+    }
+    
+    /// <summary>
+    /// Activates a Special Defense boost for the current turn (if available)
+    /// Call this BEFORE the opponent attacks
+    /// </summary>
+    public void ActivateSpecialDefenseBoost()
+    {
+        if (isGameOver) return;
+        
+        if (myPokemon.UseSpecialDefenseBoost())
+        {
+            networkManager.AddChatMessage("System", $"{myPokemon.name} used Special Defense Boost! ({myPokemon.specialDefenseBoostsRemaining} remaining)");
+            UpdateBoostDisplay();  // Refresh UI
+        }
+        else
+        {
+            networkManager.AddChatMessage("System", $"{myPokemon.name} has no Special Defense boosts left!");
+        }
+    }
+    // ====================================================
+    
     public void OnOpponentAttackAnnounce(string moveName)
     {
         // SPECTATOR: Just say a move happened (Since we can't be 100% sure who sent it without checking IP)
@@ -231,13 +309,29 @@ public class BattleManager : MonoBehaviour
                 if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                 OnGameOver(enemyPokemon.name);
             }
-            else SetButtonsInteractable(true); 
+            else
+            {
+                // ===== RFC REQUIREMENT: Reset Boost Multipliers =====
+                // Boosts only last for ONE turn, so reset them after damage is applied
+                myPokemon.ResetBoostMultipliers();
+                enemyPokemon.ResetBoostMultipliers();
+                Debug.Log("[BOOST] Multipliers reset for next turn");
+                // ===================================================
+                
+                SetButtonsInteractable(true);
+            } 
         }
         else
         {
             // I am the attacker, just visual update
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
+            
+            // ===== RFC REQUIREMENT: Reset Boost Multipliers After Attack =====
+            // After attacker's turn completes, reset multipliers for both Pokemon
+            myPokemon.ResetBoostMultipliers();
+            enemyPokemon.ResetBoostMultipliers();
+            // =================================================================
         }
     }
 
@@ -286,6 +380,26 @@ public class BattleManager : MonoBehaviour
         bool isPhysical = move.category == "Physical";
         float atkStat = isPhysical ? attacker.attack : attacker.spAttack;
         float defStat = isPhysical ? defender.defense : defender.spDefense;
+        
+        // ===== RFC REQUIREMENT: Apply Stat Boosts =====
+        // If boosts are active, multiply the stats by their multipliers
+        if (!isPhysical)
+        {
+            // Special move: Apply boost multipliers
+            atkStat *= attacker.currentSpAttackMultiplier;
+            defStat *= defender.currentSpDefenseMultiplier;
+            
+            // Log boost usage for debugging
+            if (attacker.currentSpAttackMultiplier > 1.0f)
+            {
+                Debug.Log($"[BOOST ACTIVE] {attacker.name}'s Special Attack boosted! ({attacker.spAttack} × {attacker.currentSpAttackMultiplier} = {atkStat})");
+            }
+            if (defender.currentSpDefenseMultiplier > 1.0f)
+            {
+                Debug.Log($"[BOOST ACTIVE] {defender.name}'s Special Defense boosted! ({defender.spDefense} × {defender.currentSpDefenseMultiplier} = {defStat})");
+            }
+        }
+        // =============================================
 
         // 2. Type Effectiveness
         // RFC: Type1Effectiveness x Type2Effectiveness
@@ -329,15 +443,55 @@ public class BattleManager : MonoBehaviour
     {
         foreach (var btn in moveButtons) if(btn != null) btn.interactable = state;
     }
+    
+    // ===== RFC REQUIREMENT: Update Boost Display UI =====
+    /// <summary>
+    /// Updates the boost counter text displays and button states
+    /// </summary>
+    private void UpdateBoostDisplay()
+    {
+        if (myPokemon == null) return;
+        
+        // Update Special Attack Boost Display
+        if (spAttackBoostText != null)
+        {
+            spAttackBoostText.text = $"SpAtk Boosts: {myPokemon.specialAttackBoostsRemaining}";
+        }
+        
+        // Update Special Defense Boost Display
+        if (spDefenseBoostText != null)
+        {
+            spDefenseBoostText.text = $"SpDef Boosts: {myPokemon.specialDefenseBoostsRemaining}";
+        }
+        
+        // Enable/Disable boost buttons based on availability
+        if (spAttackBoostButton != null)
+        {
+            spAttackBoostButton.interactable = (myPokemon.specialAttackBoostsRemaining > 0) && !isGameOver;
+        }
+        
+        if (spDefenseBoostButton != null)
+        {
+            spDefenseBoostButton.interactable = (myPokemon.specialDefenseBoostsRemaining > 0) && !isGameOver;
+        }
+    }
+    // ====================================================
 
-    public void SetOpponentPokemon(string pokemonName)
+    // RFC REQUIREMENT: Accept stat boosts from BATTLE_SETUP message
+    public void SetOpponentPokemon(string pokemonName, int spAtkBoosts = 5, int spDefBoosts = 5)
     {
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
         if (p != null)
         {
             enemyPokemon = p;
+            
+            // Apply the opponent's allocated stat boosts
+            enemyPokemon.specialAttackBoostsRemaining = spAtkBoosts;
+            enemyPokemon.specialDefenseBoostsRemaining = spDefBoosts;
+            
+            Debug.Log($"Opponent is using: {pokemonName} (SpAtk Boosts: {spAtkBoosts}, SpDef Boosts: {spDefBoosts})");
+            
             UpdateBattleUI();
-            Debug.Log($"Opponent is using: {pokemonName}");
         }
         else
         {
@@ -355,12 +509,18 @@ public class BattleManager : MonoBehaviour
         return enemyPokemon != null ? enemyPokemon.name : "Unknown"; 
     }
 
-    public void SetMyPokemon(string pokemonName)
+    // RFC REQUIREMENT: Accept stat boosts from BATTLE_SETUP message (for spectators)
+    public void SetMyPokemon(string pokemonName, int spAtkBoosts = 5, int spDefBoosts = 5)
     {
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
         if (p != null)
         {
             myPokemon = p;
+            
+            // Apply the allocated stat boosts
+            myPokemon.specialAttackBoostsRemaining = spAtkBoosts;
+            myPokemon.specialDefenseBoostsRemaining = spDefBoosts;
+            
             UpdateBattleUI();
         }
     }

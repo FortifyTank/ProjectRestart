@@ -187,6 +187,24 @@ public class UDPChatManager : MonoBehaviour
         {
             string pokeName = ParseValue(rawData, "pokemon_name");
             
+            // ===== RFC REQUIREMENT: Parse stat_boosts =====
+            string statBoostsStr = ParseValue(rawData, "stat_boosts");
+            int spAtkBoosts = 5;  // Default fallback
+            int spDefBoosts = 5;  // Default fallback
+            
+            // Parse the JSON-like string: { "special_attack_uses": 5, "special_defense_uses": 5 }
+            if (!string.IsNullOrEmpty(statBoostsStr))
+            {
+                spAtkBoosts = ParseJsonInt(statBoostsStr, "special_attack_uses", 5);
+                spDefBoosts = ParseJsonInt(statBoostsStr, "special_defense_uses", 5);
+                
+                if (verboseMode)
+                {
+                    Debug.Log($"[SETUP] Opponent allocated: {spAtkBoosts} SpAtk boosts, {spDefBoosts} SpDef boosts");
+                }
+            }
+            // ==============================================
+            
             if (battleManager != null) 
             {
                 if (isSpectator)
@@ -196,20 +214,20 @@ public class UDPChatManager : MonoBehaviour
                     if (battleManager.GetMyPokemonName() == "Unknown" || battleManager.GetMyPokemonName() == "Bulbasaur") // Bulbasaur was our dummy default
                     {
                         // Hack: Use "myPokemon" slot for the Host
-                        battleManager.SetMyPokemon(pokeName); // Need to add this helper
+                        battleManager.SetMyPokemon(pokeName, spAtkBoosts, spDefBoosts);
                         AddChatMessage("System", $"Host is using {pokeName}");
                     }
                     else
                     {
                         // Use "enemyPokemon" slot for the Joiner
-                        battleManager.SetOpponentPokemon(pokeName);
+                        battleManager.SetOpponentPokemon(pokeName, spAtkBoosts, spDefBoosts);
                         AddChatMessage("System", $"Player 2 is using {pokeName}");
                     }
                 }
                 else
                 {
-                    // Normal Player Logic
-                    battleManager.SetOpponentPokemon(pokeName);
+                    // Normal Player Logic: Apply boosts to opponent
+                    battleManager.SetOpponentPokemon(pokeName, spAtkBoosts, spDefBoosts);
                     AddChatMessage("System", $"Opponent chose {pokeName}");
                 }
             }
@@ -265,14 +283,21 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendBattleSetup(string pokemonName)
+    // RFC REQUIREMENT: Send stat_boosts in BATTLE_SETUP
+    // stat_boosts are the LIMITED, CONSUMABLE resources players get for the battle
+    public void SendBattleSetup(string pokemonName, int spAttackBoosts, int spDefenseBoosts)
     {
         string payload = $"message_type: BATTLE_SETUP\n" +
                          $"communication_mode: P2P\n" +
                          $"pokemon_name: {pokemonName}\n" +
-                         $"stat_boosts: {{ \"special_attack_uses\": 5, \"special_defense_uses\": 5 }}\n" +
+                         $"stat_boosts: {{ \"special_attack_uses\": {spAttackBoosts}, \"special_defense_uses\": {spDefenseBoosts} }}\n" +
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
+        
+        if (verboseMode)
+        {
+            Debug.Log($"[SETUP] Sent BATTLE_SETUP: {pokemonName} with {spAttackBoosts} SpAtk boosts, {spDefenseBoosts} SpDef boosts");
+        }
     }
 
     public void SendAttackAnnounce(string moveName)
@@ -669,6 +694,42 @@ public class UDPChatManager : MonoBehaviour
         }
         return "";
     }
+    
+    // ===== RFC HELPER: Parse JSON-like stat_boosts field =====
+    // Extracts integer values from: { "special_attack_uses": 5, "special_defense_uses": 5 }
+    private int ParseJsonInt(string json, string key, int defaultValue)
+    {
+        try
+        {
+            // Find the key in the JSON-like string
+            string searchFor = $"\"{key}\":";
+            int startIndex = json.IndexOf(searchFor);
+            
+            if (startIndex == -1) return defaultValue;
+            
+            // Move past the key and colon
+            startIndex += searchFor.Length;
+            
+            // Find the next comma or closing brace
+            int endIndex = json.IndexOfAny(new char[] { ',', '}' }, startIndex);
+            if (endIndex == -1) endIndex = json.Length;
+            
+            // Extract the number
+            string numberStr = json.Substring(startIndex, endIndex - startIndex).Trim();
+            
+            if (int.TryParse(numberStr, out int result))
+            {
+                return result;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[PARSE] Failed to parse '{key}' from stat_boosts: {e.Message}");
+        }
+        
+        return defaultValue;
+    }
+    // =========================================================
     
     private void OnApplicationQuit()
     {
