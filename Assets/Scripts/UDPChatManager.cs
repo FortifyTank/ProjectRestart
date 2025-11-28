@@ -645,6 +645,7 @@ public class UDPChatManager : MonoBehaviour
         panelChat.SetActive(true);
         SendHandshakeRequest();
         AddChatMessage("System", $"Sent Handshake to {ip}...");
+        if(statusText != null) statusText.text = "Joining...";
     }
     
     public void OnClick_Send()
