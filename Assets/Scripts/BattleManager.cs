@@ -7,6 +7,29 @@ public class BattleManager : MonoBehaviour
 {
     public UDPChatManager networkManager; 
 
+    [Header("UI Menus")]
+    public GameObject actionMenu; // The container with Fight/Bag/Pkmn/Run
+    public GameObject movesPanel; // The container with the 4 move buttons
+    public GameObject partyPanel; // The container for switching (we'll build logic later)
+    
+    // Add reference to the NEW buttons so we can listen to them
+    public Button btnFight;
+    public Button btnBag;
+    public Button btnPokemon;
+    public Button btnRun;
+    public Button btnBack; // Shared back button for sub-menus
+    public Button btnPartyBack;
+
+    [Header("Bag UI")]
+    public GameObject bagPanel;      // Drag 'BagPanel' here
+    public Button btnBagBack;        // Drag 'Btn_BagBack' here
+    
+    // The 4 Item Buttons
+    public Button btnXAttack;
+    public Button btnXDefense;
+    public Button btnXSpAtk;
+    public Button btnXSpDef;
+
     [Header("Player UI")]
     public Image playerImage; 
     public Slider playerHpBar; 
@@ -36,8 +59,18 @@ public class BattleManager : MonoBehaviour
     
     private Pokemon enemyPokemon;
 
+    private string myPendingMove = ""; // What I picked
+    private int myPendingSpeed = 0;    
+    
+    private string enemyPendingMove = ""; // What enemy picked
+    private int enemyPendingSpeed = 0;
+    
+    private bool hasICommitted = false;
+    private bool hasEnemyCommitted = false;
+
     void Start()
     {
+        InitializeMenus();
         if (networkManager == null) networkManager = GetComponent<UDPChatManager>();
         SetButtonsInteractable(false);
     }
@@ -368,7 +401,14 @@ public class BattleManager : MonoBehaviour
 
     public void SetButtonsInteractable(bool state)
     {
-        foreach (var btn in moveButtons) if(btn != null) btn.interactable = state;
+        // Disable the main menu buttons, not the hidden move buttons
+        if (btnFight) btnFight.interactable = state;
+        if (btnBag) btnBag.interactable = state;
+        if (btnPokemon) btnPokemon.interactable = state;
+        if (btnRun) btnRun.interactable = state;
+        
+        // If it's NOT our turn, hide the sub-menus to prevent cheating
+        if (!state) ShowMainMenu();
     }
 
     public void SetOpponentPokemon(string pokemonName)
@@ -479,5 +519,74 @@ public class BattleManager : MonoBehaviour
         // 2. Send it to Everyone (Opponent + Spectators)
         // We use SendSystemMessage which we will add to UDPChatManager in a second
         if (networkManager != null) networkManager.SendSystemMessagePacket(text);
+    }
+
+    public void InitializeMenus()
+    {
+        // Hook up the Main Menu buttons
+        if(btnFight) btnFight.onClick.AddListener(() => OpenMoves());
+        if(btnBag) btnBag.onClick.AddListener(() => OpenBag());
+        if(btnPokemon) btnPokemon.onClick.AddListener(() => OpenParty());
+        if(btnRun) btnRun.onClick.AddListener(() => OnSurrender());
+        
+        // [NEW] Hook up the Party Back Button
+        if(btnBack) btnBack.onClick.AddListener(() => ShowMainMenu());
+
+        if(btnPartyBack) btnPartyBack.onClick.AddListener(() => ShowMainMenu());
+        
+        if(btnBagBack) btnBagBack.onClick.AddListener(() => ShowMainMenu());
+
+        // [NEW] Hook up Item Buttons (We will write UseItem later)
+        if(btnXAttack)  btnXAttack.onClick.AddListener(() => UseItem("Attack"));
+        if(btnXDefense) btnXDefense.onClick.AddListener(() => UseItem("Defense"));
+        if(btnXSpAtk)   btnXSpAtk.onClick.AddListener(() => UseItem("SpAttack"));
+        if(btnXSpDef)   btnXSpDef.onClick.AddListener(() => UseItem("SpDefense"));
+
+        ShowMainMenu();
+    }
+
+    public void ShowMainMenu()
+    {
+        if(actionMenu) actionMenu.SetActive(true);
+        if(movesPanel) movesPanel.SetActive(false);
+        if(partyPanel) partyPanel.SetActive(false);
+        if(bagPanel)   bagPanel.SetActive(false); // [NEW] Hide Bag
+    }
+
+    public void OpenMoves()
+    {
+        if(actionMenu) actionMenu.SetActive(false);
+        if(movesPanel) movesPanel.SetActive(true);
+    }
+
+    public void OpenBag()
+    {
+        if(actionMenu) actionMenu.SetActive(false);
+        if(bagPanel)   bagPanel.SetActive(true);  // [NEW] Show Bag
+    }
+
+    public void OpenParty()
+    {
+        if(actionMenu) actionMenu.SetActive(false);
+        if(partyPanel) partyPanel.SetActive(true);
+        // RefreshPartyUI(); // We will write this in the "Switching" step
+    }
+
+    public void OnSurrender()
+    {
+        networkManager.AddChatMessage("System", "You surrendered!");
+        networkManager.SendGameOver(enemyUsername); // Give win to enemy
+        OnGameOver(enemyUsername);
+    }
+
+    public void UseItem(string statName)
+    {
+        Debug.Log($"Used X-{statName}! (Logic coming soon)");
+        // Logic will be: 
+        // 1. Consume turn
+        // 2. Add +2 to stat stage
+        // 3. Send packet
+        
+        ShowMainMenu(); // Close bag after use
     }
 }
