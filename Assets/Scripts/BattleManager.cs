@@ -172,6 +172,44 @@ public class BattleManager : MonoBehaviour
         if (networkManager != null) networkManager.SendDefenseAnnounce();
     }
 
+    public void OnOpponentSwitch(string newPokemonName)
+    {
+        // 1. Mark current enemy as dead (visually 0 HP)
+        if (enemyPokemon != null) enemyPokemon.hp = 0;
+
+        // 2. Advance the enemy index
+        enemyActiveIndex++;
+
+        // 3. Ensure the list is big enough (it should be 6, but safety first)
+        if (enemyActiveIndex >= enemyParty.Count)
+        {
+            enemyActiveIndex = 0; // Should rarely happen unless 6v6 logic breaks
+        }
+
+        // 4. Load the NEW data from CSV into this slot
+        // We overwrite the random dummy that was there with the REAL pokemon data
+        Pokemon newPoke = PokemonDatabase.GetPokemon(newPokemonName);
+        if (newPoke != null)
+        {
+            enemyParty[enemyActiveIndex] = newPoke;
+            Debug.Log($"[SWITCH] Opponent switched to {newPokemonName}");
+        }
+        else
+        {
+            Debug.LogError($"[SWITCH] Could not find pokemon: {newPokemonName}");
+        }
+
+        // 5. Refresh UI
+        UpdateBattleUI();
+        if (networkManager.isSpectator)
+        {
+            // Always update active index for spectators
+            enemyActiveIndex++;
+            if (enemyActiveIndex >= enemyParty.Count) enemyActiveIndex = 0;
+            RefreshSpectatorUI();
+        }
+    }
+
     public void OnDefenseAnnounceReceived()
     {
         if (string.IsNullOrEmpty(lastMoveUsedByMe)) return;
@@ -193,24 +231,20 @@ public class BattleManager : MonoBehaviour
     }
 
     public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining)
-    {
+    {   
         // --- SPECTATOR LOGIC ---
-        if (networkManager.isSpectator)
+        if (networkManager.isSpectator) 
         {
-            // Determine who got hit based on who attacked
-            if (attackerName == myPokemon.name)
+            if (attackerName == myPokemon.name) 
             {
-                // Host Attacked -> Joiner took damage
                 enemyPokemon.hp = hpRemaining;
-                if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
             }
             else if (attackerName == enemyPokemon.name)
             {
-                // Joiner Attacked -> Host took damage
                 myPokemon.hp = hpRemaining;
-                if (playerHpBar != null) playerHpBar.value = hpRemaining;
             }
-            return;
+            RefreshSpectatorUI();
+            return; 
         }
         // -----------------------
 
@@ -220,16 +254,13 @@ public class BattleManager : MonoBehaviour
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
-
+            
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
             {
                 Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
-
                 int myCorrectHp = myPokemon.hp - myCalculatedDamage;
-
                 if (networkManager != null)
                     networkManager.SendResolutionRequest(enemyPokemon.name, pendingMoveName, myCalculatedDamage, myCorrectHp);
-
                 return;
             }
 
@@ -237,17 +268,15 @@ public class BattleManager : MonoBehaviour
             myPokemon.hp = hpRemaining;
             if (playerHpBar != null) playerHpBar.value = hpRemaining;
 
-            if (networkManager != null)
-                networkManager.SendCalculationConfirm();
-
+            if (networkManager != null) networkManager.SendCalculationConfirm();
             pendingMoveName = "";
 
-            // Check faint
+            // Check Faint
             if (myPokemon.hp <= 0)
             {
-                // 6v6 CHECK: Do I have other healthy Pokémon?
+                // [NEW] 6v6 CHECK: Do I have other pokemon?
                 bool hasAblePokemon = false;
-                foreach (var poke in myParty)
+                foreach(var poke in myParty)
                 {
                     if (poke.hp > 0) hasAblePokemon = true;
                 }
@@ -255,44 +284,41 @@ public class BattleManager : MonoBehaviour
                 if (!hasAblePokemon)
                 {
                     // Real Game Over
-                    if (networkManager != null)
-                        networkManager.SendGameOver(enemyPokemon.name);
-
+                    if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                     OnGameOver(enemyPokemon.name);
                 }
                 else
                 {
-                    // Only a faint — switch required
-                    Debug.Log("My Pokémon fainted! I need to switch!");
+                    // Just a faint - Need to switch!
+                    Debug.Log("My Pokemon fainted! I need to switch!");
                     networkManager.AddChatMessage("Battle", $"{myPokemon.name} fainted!");
-
-                    // Simple auto-switch
-                    for (int i = 0; i < myParty.Count; i++)
+                    
+                    // Auto-switch to next alive one
+                    for(int i=0; i<myParty.Count; i++)
                     {
                         if (myParty[i].hp > 0)
                         {
-                            myActiveIndex = i;   // Ensure this matches your party system
+                            myActiveIndex = i;
                             UpdateBattleUI();
+                            
+                            // [FIX] THIS IS THE NEW LINE YOU NEED!
+                            // Tell the network we switched so the Host updates their enemyPokemon variable
+                            if (networkManager != null) 
+                                networkManager.SendSwitch(myPokemon.name);
 
-                            // Re-enable buttons
-                            SetButtonsInteractable(true);
-
-                            networkManager.AddChatMessage("Battle",
-                                $"Go! {myParty[myActiveIndex].name}!");
-
+                            SetButtonsInteractable(true); 
+                            
+                            networkManager.AddChatMessage("Battle", $"Go! {myPokemon.name}!");
                             break;
                         }
                     }
                 }
             }
-            else
-            {
-                SetButtonsInteractable(true);
-            }
+            else SetButtonsInteractable(true); 
         }
         else
         {
-            // Attacker side: just update visuals
+            // I am the attacker, just visual update
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
         }
@@ -325,6 +351,12 @@ public class BattleManager : MonoBehaviour
         {
             if(winner == enemyPokemon.name) enemyNameText.text += " (WINNER)";
             else enemyNameText.text += " (FAINTED)";
+        }
+
+        // --- SPECTATOR UI ---
+        if (networkManager.isSpectator)
+        {
+            RefreshSpectatorUI();
         }
     }
 
@@ -415,6 +447,7 @@ public class BattleManager : MonoBehaviour
 
             UpdateBattleUI();
             Debug.Log($"Opponent sent Lead: {pokemonName}");
+            if (networkManager.isSpectator) RefreshSpectatorUI();
         }
         else
         {
@@ -437,8 +470,46 @@ public class BattleManager : MonoBehaviour
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
         if (p != null)
         {
+            // Always update slot 0 for spectators
+            if (networkManager.isSpectator)
+            {
+                if (myParty.Count > 0) myParty[0] = p;
+                else myParty.Add(p);
+                myActiveIndex = 0;
+            }
             myPokemon = p;
             UpdateBattleUI();
+            if (networkManager.isSpectator) RefreshSpectatorUI();
         }
+    }
+
+    // --- SPECTATOR UI REFRESH ---
+    private void RefreshSpectatorUI()
+    {
+        if (playerNameText != null) playerNameText.text = myPokemon != null ? myPokemon.name : "Unknown";
+        if (playerHpBar != null && myPokemon != null) { playerHpBar.maxValue = myPokemon.maxHp; playerHpBar.value = myPokemon.hp; }
+        if (enemyNameText != null) enemyNameText.text = enemyPokemon != null ? enemyPokemon.name : "Unknown";
+        if (enemyHpBar != null && enemyPokemon != null) { enemyHpBar.maxValue = enemyPokemon.maxHp; enemyHpBar.value = enemyPokemon.hp; }
+    }
+
+    // --- FORCE SPECTATOR SYNC ---
+    public void ForceSpectatorSync(string myName, string enemyName)
+    {
+        // Set active indices to 0 if needed
+        myActiveIndex = 0;
+        enemyActiveIndex = 0;
+
+        // Replace slot 0 with correct Pokémon
+        if (!string.IsNullOrEmpty(myName))
+        {
+            if (myParty.Count > 0) myParty[0] = PokemonDatabase.GetPokemon(myName);
+            else myParty.Add(PokemonDatabase.GetPokemon(myName));
+        }
+        if (!string.IsNullOrEmpty(enemyName))
+        {
+            if (enemyParty.Count > 0) enemyParty[0] = PokemonDatabase.GetPokemon(enemyName);
+            else enemyParty.Add(PokemonDatabase.GetPokemon(enemyName));
+        }
+        RefreshSpectatorUI();
     }
 }

@@ -252,6 +252,15 @@ public class UDPChatManager : MonoBehaviour
             int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
             if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
         }
+        else if (type == "SWITCH")
+        {
+            string newName = ParseValue(rawData, "pokemon_name");
+            if (battleManager != null) 
+            {
+                battleManager.OnOpponentSwitch(newName);
+                AddChatMessage("Battle", $"Opponent sent out {newName}!");
+            }
+        }
         else if (type == "GAME_OVER")
         {
             string winner = ParseValue(rawData, "winner");
@@ -285,6 +294,15 @@ public class UDPChatManager : MonoBehaviour
                          $"stat_boosts: {{ \"special_attack_uses\": 5, \"special_defense_uses\": 5 }}\n" +
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
+    }
+
+    public void SendSwitch(string newPokemonName)
+    {
+        string payload = $"message_type: SWITCH\n" +
+                         $"pokemon_name: {newPokemonName}\n" +
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+        AddChatMessage("System", $"Go! {newPokemonName}!");
     }
 
     public void SendAttackAnnounce(string moveName)
