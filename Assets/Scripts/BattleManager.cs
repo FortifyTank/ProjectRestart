@@ -282,36 +282,36 @@ public class BattleManager : MonoBehaviour
         MoveData move = MoveDatabase.Moves[moveName];
 
         // 1. Determine Stats (Physical vs Special)
-        // RFC: "The formula uses the appropriate attack and defense stats"
         bool isPhysical = move.category == "Physical";
         float atkStat = isPhysical ? attacker.attack : attacker.spAttack;
         float defStat = isPhysical ? defender.defense : defender.spDefense;
 
-        // 2. Type Effectiveness
-        // RFC: Type1Effectiveness x Type2Effectiveness
-        float type1Mult = TypeChart.GetEffectiveness(move.type, defender.types[0]);
-        float type2Mult = (defender.types.Count > 1) ? TypeChart.GetEffectiveness(move.type, defender.types[1]) : 1.0f;
-        float totalTypeMult = type1Mult * type2Mult;
+        // 2. Type Effectiveness (RFC Compliant via CSV)
+        float totalTypeMult = 1.0f;
+        string moveTypeLower = move.type.ToLower();
+
+        if (defender.typeMultipliers != null && defender.typeMultipliers.ContainsKey(moveTypeLower))
+        {
+            totalTypeMult = defender.typeMultipliers[moveTypeLower];
+        }
+        else
+        {
+            Debug.LogWarning($"No type data found for {moveTypeLower} vs {defender.name}. Defaulting to 1.0");
+        }
 
         // 3. Formula
-        // RFC: Damage = (BasePower * AttackerStat * Type1 * Type2) / DefenderStat
+        // RFC: Damage = (BasePower * AttackerStat * TypeEffectiveness) / DefenderStat
         float numerator = move.power * atkStat * totalTypeMult;
         float rawDamage = numerator / defStat;
         
         int finalDamage = Mathf.FloorToInt(rawDamage);
-        if (finalDamage < 1) finalDamage = 1; // Minimum 1 damage rule usually applies
+        if (finalDamage < 1) finalDamage = 1; 
 
-        // --- CONSOLIDATED DEBUG LOG FOR RUBRIC ---
-        string defenderTypes = string.Join("/", defender.types);
-        
+        // --- NEW DETAILED LOG ---
         Debug.Log($"<color=cyan><b>[CALCULATION REPORT]</b></color> {attacker.name} used {moveName} on {defender.name}\n" +
-                  $"----------------------------------------------------------------\n" +
-                  $"<b>Context:</b>      Move: {move.type}/{move.category} ({move.power} Pwr) | Def Types: {defenderTypes}\n" +
-                  $"<b>Stats Used:</b>   Atk: {atkStat} vs Def: {defStat}\n" +
-                  $"<b>Effectiveness:</b> x{type1Mult} (Type1) * x{type2Mult} (Type2) = <b>x{totalTypeMult} Total</b>\n" +
-                  $"<b>Equation:</b>     ({move.power} * {atkStat} * {totalTypeMult}) / {defStat}\n" +
-                  $"<b>Result:</b>       {rawDamage:F2} -> <b><color=red>{finalDamage} DMG</color></b>\n" +
-                  $"----------------------------------------------------------------");
+                  $"<b>Stats:</b> Atk: {atkStat} | Def: {defStat}\n" +
+                  $"<b>Math:</b> ({move.power} * {atkStat} * {totalTypeMult}) / {defStat}\n" +
+                  $"<b>Result:</b> {numerator} / {defStat} = <b>{finalDamage} DMG</b>");
 
         return finalDamage;
     }
