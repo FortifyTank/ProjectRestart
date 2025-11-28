@@ -48,7 +48,7 @@ public class UDPChatManager : MonoBehaviour
     private bool isAppRunning = true;
     
     private float broadcastTimer = 0f;
-    private bool isHosting = false;
+    public bool isHosting = false;
     private string myUsername = "Player";
     private string targetIP = "";
     private int targetPort = 8000; 

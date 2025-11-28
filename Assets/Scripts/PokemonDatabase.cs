@@ -15,6 +15,8 @@ public class PokemonDatabase : MonoBehaviour
     {
         if (IsLoaded) return;
 
+        MoveLoader.LoadAllMoves();
+
         // Load text file from Assets/Resources/pokemon.csv
         TextAsset csvFile = Resources.Load<TextAsset>("pokemon");
         if (csvFile == null)
@@ -36,6 +38,9 @@ public class PokemonDatabase : MonoBehaviour
         int spAtkIndex = Array.IndexOf(headers, "sp_attack");
         int spDefIndex = Array.IndexOf(headers, "sp_defense");
         int speedIndex = Array.IndexOf(headers, "speed");
+
+        int idIndex = Array.IndexOf(headers, "pokedex_number"); // [NEW] Find the ID column
+
         int type1Index = Array.IndexOf(headers, "type1");
         int type2Index = Array.IndexOf(headers, "type2");
 
@@ -62,7 +67,10 @@ public class PokemonDatabase : MonoBehaviour
             {
                 string name = data[nameIndex];
                 
-                // Fix: Some CSVs have empty fields, treat them as 0 or handle gracefully
+                // [NEW] Parse the ID (Default to 0 if missing)
+                int id = (idIndex != -1) ? ParseInt(data[idIndex]) : 0; 
+
+                // [FIX] Existing stats parsing...
                 int hp = ParseInt(data[hpIndex]);
                 int atk = ParseInt(data[atkIndex]);
                 int def = ParseInt(data[defIndex]);
@@ -74,8 +82,8 @@ public class PokemonDatabase : MonoBehaviour
                 types.Add(data[type1Index]);
                 if (!string.IsNullOrEmpty(data[type2Index])) types.Add(data[type2Index]);
 
-                // Create the Pokemon Object
-                Pokemon p = new Pokemon(name, types, hp, atk, def, spAtk, spDef, speed);
+                // [FIX] Pass 'id' as the FIRST argument now
+                Pokemon p = new Pokemon(id, name, types, hp, atk, def, spAtk, spDef, speed);
                 
                 // --- NEW: Parse Resistance Columns Automatically ---
                 // The CSV has columns like "against_bug", "against_dark"
@@ -101,7 +109,19 @@ public class PokemonDatabase : MonoBehaviour
                 // ---------------------------------------------------
 
                 // Auto-assign moves based on Type
-                p.moves = MoveDatabase.GetMovesForType(types[0]);
+                if (MoveLoader.Learnsets.ContainsKey(p.pokedexId)) // Wait, we need to make sure we parsed Pokedex ID!
+                {
+                    p.moves = MoveLoader.Learnsets[p.pokedexId];
+                    
+                    // Limit to 4 moves so the UI doesn't explode
+                    if (p.moves.Count > 4) 
+                        p.moves = p.moves.GetRange(0, 4);
+                }
+                else
+                {
+                    // Fallback if CSV fails
+                    p.moves = new List<string> { "Tackle" }; 
+                }
 
                 if (!AllPokemon.ContainsKey(name))
                 {
@@ -125,11 +145,12 @@ public class PokemonDatabase : MonoBehaviour
 
         if (AllPokemon.ContainsKey(name))
         {
-            // Return a COPY so we don't modify the database original
             Pokemon original = AllPokemon[name];
-            return new Pokemon(original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed) 
+            // [FIX] Added 'original.pokedexId' as the first argument
+            return new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed) 
             { 
-                moves = new List<string>(original.moves) 
+                moves = new List<string>(original.moves),
+                typeMultipliers = new Dictionary<string, float>(original.typeMultipliers) // Copy dictionary too!
             };
         }
         

@@ -30,6 +30,10 @@ public class BattleManager : MonoBehaviour
     private string pendingMoveName = "";
     private string lastMoveUsedByMe = "";
 
+    private Pokemon myPokemon;
+    
+    private Pokemon enemyPokemon;
+
     void Start()
     {
         if (networkManager == null) networkManager = GetComponent<UDPChatManager>();
