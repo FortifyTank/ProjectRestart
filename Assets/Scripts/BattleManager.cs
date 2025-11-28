@@ -21,8 +21,9 @@ public class BattleManager : MonoBehaviour
     public Button[] moveButtons; 
     public TMP_Text[] moveButtonLabels; 
 
-    private Pokemon myPokemon;
-    private Pokemon enemyPokemon;
+    public List<Pokemon> myParty = new List<Pokemon>();
+    public List<Pokemon> enemyParty = new List<Pokemon>(); // For the host to track the opponent
+    public int myActiveIndex = 0;
     private bool isGameOver = false;
     
     // State tracking for handshake
@@ -239,6 +240,7 @@ public class BattleManager : MonoBehaviour
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
         }
+        SendSpectatorUpdate();
     }
 
     public void OnResolutionRequest(int correctDamage, int correctHp)
@@ -343,6 +345,7 @@ public class BattleManager : MonoBehaviour
         {
             Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
         }
+        SendSpectatorUpdate();
     }
 
     public string GetMyPokemonName() 
@@ -362,6 +365,38 @@ public class BattleManager : MonoBehaviour
         {
             myPokemon = p;
             UpdateBattleUI();
+        }
+    }
+
+    // 1. Add this function inside BattleManager
+    public void ForceUpdateSpectatorView(string myMonName, int myHp, int myMax, string enemyMonName, int enemyHp, int enemyMax)
+    {
+        // FORCE UPDATE PLAYER SIDE (Host)
+        if (playerNameText != null) playerNameText.text = myMonName;
+        if (playerHpBar != null) 
+        {
+            playerHpBar.maxValue = myMax;
+            playerHpBar.value = myHp;
+        }
+
+        // FORCE UPDATE ENEMY SIDE (Joiner)
+        if (enemyNameText != null) enemyNameText.text = enemyMonName;
+        if (enemyHpBar != null) 
+        {
+            enemyHpBar.maxValue = enemyMax;
+            enemyHpBar.value = enemyHp;
+        }
+    }
+
+    // 2. Add this helper to send the data (Only Host runs this)
+    public void SendSpectatorUpdate()
+    {
+        if (networkManager != null && networkManager.isHosting)
+        {
+            networkManager.SendSpectatorSync(
+                myPokemon.name, myPokemon.hp, myPokemon.maxHp,
+                enemyPokemon.name, enemyPokemon.hp, enemyPokemon.maxHp
+            );
         }
     }
 }

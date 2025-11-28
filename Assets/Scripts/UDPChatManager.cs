@@ -232,30 +232,68 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "ATTACK_ANNOUNCE")
         {
-            string move = ParseValue(rawData, "move_name");
-            if (battleManager != null) battleManager.OnOpponentAttackAnnounce(move);
+            // WRAP START
+            if (!isSpectator) 
+            {
+                string move = ParseValue(rawData, "move_name");
+                if (battleManager != null) battleManager.OnOpponentAttackAnnounce(move);
+            }
+            // WRAP END
         }
         else if (type == "DEFENSE_ANNOUNCE")
         {
-            if (battleManager != null) battleManager.OnDefenseAnnounceReceived();
+            // WRAP START
+            if (!isSpectator)
+            {
+                if (battleManager != null) battleManager.OnDefenseAnnounceReceived();
+            }
+            // WRAP END
         }
         else if (type == "CALCULATION_REPORT")
         {
-            string attackerName = ParseValue(rawData, "attacker"); 
-            int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
-            int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-            if (battleManager != null) battleManager.OnCalculationReport(attackerName, dmg, hp);
+            // WRAP START
+            if (!isSpectator)
+            {
+                string attackerName = ParseValue(rawData, "attacker"); 
+                int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
+                int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
+                if (battleManager != null) battleManager.OnCalculationReport(attackerName, dmg, hp);
+            }
+            // WRAP END
         }
         else if (type == "RESOLUTION_REQUEST")
         {
-            int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
-            int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-            if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
+            // WRAP START
+            if (!isSpectator)
+            {
+                int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
+                int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
+                if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
+            }
+            // WRAP END
         }
         else if (type == "GAME_OVER")
         {
             string winner = ParseValue(rawData, "winner");
             if (battleManager != null) battleManager.OnGameOver(winner);
+        }
+        else if (type == "SPECTATOR_SYNC")
+        {
+            // 1. Parse the Host's State
+            string hName = ParseValue(rawData, "host_mon");
+            int hHp = int.Parse(ParseValue(rawData, "host_hp"));
+            int hMax = int.Parse(ParseValue(rawData, "host_max"));
+            
+            // 2. Parse the Client's State
+            string cName = ParseValue(rawData, "client_mon");
+            int cHp = int.Parse(ParseValue(rawData, "client_hp"));
+            int cMax = int.Parse(ParseValue(rawData, "client_max"));
+
+            // 3. Force the UI to match
+            if (battleManager != null)
+            {
+                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax);
+            }
         }
     }
 
@@ -801,6 +839,24 @@ public class UDPChatManager : MonoBehaviour
                 // FIXED: DO NOT generate a new seq number here
                 AddToPending(relaySeq, newPayload, target);
             }
+        }
+    }
+
+    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
+    {
+        string payload = $"message_type: SPECTATOR_SYNC\n" +
+                        $"host_mon: {hName}\n" +
+                        $"host_hp: {hHp}\n" +
+                        $"host_max: {hMax}\n" +
+                        $"client_mon: {cName}\n" +
+                        $"client_hp: {cHp}\n" +
+                        $"client_max: {cMax}\n" +
+                        $"sequence_number: {GetNextSeq()}";
+                        
+        // Send to all spectators
+        foreach(var spec in spectators)
+        {
+            SendRawBytes(Encoding.UTF8.GetBytes(payload), spec);
         }
     }
 }
