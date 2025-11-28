@@ -77,6 +77,29 @@ public class PokemonDatabase : MonoBehaviour
                 // Create the Pokemon Object
                 Pokemon p = new Pokemon(name, types, hp, atk, def, spAtk, spDef, speed);
                 
+                // --- NEW: Parse Resistance Columns Automatically ---
+                // The CSV has columns like "against_bug", "against_dark"
+                // We map these directly to the Pokemon's internal dictionary.
+                
+                string[] allTypes = { "bug", "dark", "dragon", "electric", "fairy", "fight", "fire", "flying", "ghost", "grass", "ground", "ice", "normal", "poison", "psychic", "rock", "steel", "water" };
+
+                foreach (string typeKey in allTypes)
+                {
+                    // The CSV header is "against_bug", "against_fire", etc.
+                    string headerName = "against_" + typeKey;
+                    int colIndex = Array.IndexOf(headers, headerName);
+                    
+                    if (colIndex != -1)
+                    {
+                        // Parse the float value (e.g., 0.5, 2.0, 1)
+                        if (float.TryParse(data[colIndex], out float mult))
+                        {
+                            p.typeMultipliers[typeKey] = mult;
+                        }
+                    }
+                }
+                // ---------------------------------------------------
+
                 // Auto-assign moves based on Type
                 p.moves = MoveDatabase.GetMovesForType(types[0]);
 

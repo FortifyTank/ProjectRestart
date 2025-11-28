@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -23,26 +24,24 @@ public class UDPChatManager : MonoBehaviour
     
     [Header("Chat UI")]
     public TMP_InputField inputMessage;
-    public Transform chatContent;    // NEW: The "Content" object in Scroll View
-    public GameObject textMessagePrefab;    // NEW: Your Text Prefab
-    public GameObject stickerMessagePrefab; // NEW: Your Sticker Prefab
+    public Transform chatContent;    
+    public GameObject textMessagePrefab;    
+    public GameObject stickerMessagePrefab; 
 
     [Header("Network Settings")]
     public int chatPort = 8000;
     public int broadcastPort = 8001;
 
     [Header("Debug")]
-    public bool verboseMode = true; // Set this to true in Inspector to see logs
+    public bool verboseMode = true; 
 
     [Header("Spectator Mode")]
     public bool isSpectator = false;
     public List<IPEndPoint> spectators = new List<IPEndPoint>();
 
-    // --- RELIABILITY SETTINGS ---
-    private const float RETRY_INTERVAL = 0.5f; // 500ms
+    private const float RETRY_INTERVAL = 0.5f; 
     private const int MAX_RETRIES = 5;
 
-    // Internal Network State
     private UdpClient chatClient;
     private UdpClient broadcastClient;
     private Thread receiveThread;
@@ -54,35 +53,34 @@ public class UDPChatManager : MonoBehaviour
     private string targetIP = "";
     private int targetPort = 8000; 
     
-    // [FIX] Monotonically increasing sequence number (RFC Requirement)
     private int localSequenceNumber = 0;
+    private bool isBattleSetup = false; 
 
-    // Queues
     private ConcurrentQueue<string> chatQueue = new ConcurrentQueue<string>();
     private ConcurrentQueue<string> foundRoomsQueue = new ConcurrentQueue<string>();
     private List<string> knownRooms = new List<string>();
     private ConcurrentQueue<string> battleEventQueue = new ConcurrentQueue<string>(); 
+    private object socketLock = new object();
 
-    // --- RELIABILITY STATE ---
+    // --- UPDATED RELIABILITY STATE ---
     private class PendingPacket
     {
         public int sequenceNumber;
         public string payload;
         public float timeSinceLastSend;
         public int retryCount;
+        public IPEndPoint destination; // [NEW] Track who this specific packet is for
     }
     private List<PendingPacket> pendingPackets = new List<PendingPacket>();
     private Dictionary<string, HashSet<int>> receivedSequencesPerUser = new Dictionary<string, HashSet<int>>();
 
     void Start()
     {
-        // Auto-find BattleManager
         if (battleManager == null) battleManager = GetComponent<BattleManager>();
 
         panelMenu.SetActive(true);
         panelChat.SetActive(false);
-        myUsername = "Player" + Random.Range(100, 999);
-        if(inputUsername != null) inputUsername.text = myUsername;
+        if(inputUsername != null) inputUsername.text = "Player" + UnityEngine.Random.Range(100, 999);
 
         StartDiscoveryListener();
     }
@@ -105,25 +103,31 @@ public class UDPChatManager : MonoBehaviour
 
     private void HandleReliability()
     {
-        for (int i = pendingPackets.Count - 1; i >= 0; i--)
+        lock (pendingPackets) 
         {
-            var pkt = pendingPackets[i];
-            pkt.timeSinceLastSend += Time.deltaTime;
-
-            if (pkt.timeSinceLastSend >= RETRY_INTERVAL)
+            for (int i = pendingPackets.Count - 1; i >= 0; i--)
             {
-                if (pkt.retryCount < MAX_RETRIES)
+                var pkt = pendingPackets[i];
+                pkt.timeSinceLastSend += Time.deltaTime;
+
+                if (pkt.timeSinceLastSend >= RETRY_INTERVAL)
                 {
-                    Debug.LogWarning($"[Resending] Seq {pkt.sequenceNumber} (Attempt {pkt.retryCount + 1})");
-                    SendRawBytes(Encoding.UTF8.GetBytes(pkt.payload));
-                    pkt.timeSinceLastSend = 0f;
-                    pkt.retryCount++;
-                }
-                else
-                {
-                    Debug.LogError($"[Timeout] Gave up on Seq {pkt.sequenceNumber}");
-                    pendingPackets.RemoveAt(i);
-                    AddChatMessage("System", "Connection Lost (Timeout)");
+                    if (pkt.retryCount < MAX_RETRIES)
+                    {
+                        if(verboseMode) Debug.LogWarning($"[Resending] Seq {pkt.sequenceNumber} to {pkt.destination}");
+                        
+                        // [FIX] Resend to the specific destination stored in the packet
+                        SendRawBytes(Encoding.UTF8.GetBytes(pkt.payload), pkt.destination); 
+                        
+                        pkt.timeSinceLastSend = 0f;
+                        pkt.retryCount++;
+                    }
+                    else
+                    {
+                        // Don't kill connection for spectators, just drop the packet
+                        if (verboseMode) Debug.LogError($"[Timeout] Dropped Seq {pkt.sequenceNumber} for {pkt.destination}");
+                        pendingPackets.RemoveAt(i);
+                    }
                 }
             }
         }
@@ -133,9 +137,7 @@ public class UDPChatManager : MonoBehaviour
     {
         while (chatQueue.TryDequeue(out string rawMsg))
         {
-            string[] parts = rawMsg.Split('|');
-
-            // If it's a command (has 3 parts: TYPE|SENDER|DATA)
+            string[] parts = rawMsg.Split(new char[]{'|'}, 3);
             if (parts.Length >= 3)
             {
                 string type = parts[0];
@@ -147,7 +149,6 @@ public class UDPChatManager : MonoBehaviour
             }
             else
             {
-                // Fallback for simple system messages
                 SpawnText("System", rawMsg);
             }
         }
@@ -173,15 +174,32 @@ public class UDPChatManager : MonoBehaviour
     {
         if (type == "HANDSHAKE_REQUEST")
         {
+            string joinerName = ParseValue(rawData, "username");
+            if (string.IsNullOrEmpty(joinerName)) joinerName = "Unknown Player";
+
+            if (!isBattleSetup)
+            {
+                AddChatMessage("System", $"{joinerName} Connected! Sending Handshake Response...");
+            }
+
             SendHandshakeResponse();
-            AddChatMessage("System", "Player Connected! Sending Handshake Response...");
-            if (battleManager != null) battleManager.SetupBattle(true);
+
+            if (battleManager != null && !isBattleSetup) 
+            {
+                isBattleSetup = true;
+                battleManager.SetupBattle(true);
+            }
         }
         else if (type == "HANDSHAKE_RESPONSE")
         {
             string seed = ParseValue(rawData, "seed");
-            AddChatMessage("System", $"Connected! Seed: {seed}");
-            if (battleManager != null) battleManager.SetupBattle(false);
+            
+            if (!isBattleSetup)
+            {
+                AddChatMessage("System", $"Connected! Seed: {seed}");
+                isBattleSetup = true;
+                if (battleManager != null) battleManager.SetupBattle(false);
+            }
         }
         else if (type == "BATTLE_SETUP")
         {
@@ -191,36 +209,30 @@ public class UDPChatManager : MonoBehaviour
             {
                 if (isSpectator)
                 {
-                    // Spectator Logic: First name received goes to Player 1 (Left), Second to Player 2 (Right)
-                    // We check if P1 is empty. If yes, fill it. If no, fill P2.
-                    if (battleManager.GetMyPokemonName() == "Unknown" || battleManager.GetMyPokemonName() == "Bulbasaur") // Bulbasaur was our dummy default
+                    if (battleManager.GetMyPokemonName() == "Unknown" || battleManager.GetMyPokemonName() == "Bulbasaur")
                     {
-                        // Hack: Use "myPokemon" slot for the Host
-                        battleManager.SetMyPokemon(pokeName); // Need to add this helper
+                        battleManager.SetMyPokemon(pokeName); 
                         AddChatMessage("System", $"Host is using {pokeName}");
                     }
                     else
                     {
-                        // Use "enemyPokemon" slot for the Joiner
                         battleManager.SetOpponentPokemon(pokeName);
                         AddChatMessage("System", $"Player 2 is using {pokeName}");
                     }
                 }
                 else
                 {
-                    // Normal Player Logic
-                    battleManager.SetOpponentPokemon(pokeName);
-                    AddChatMessage("System", $"Opponent chose {pokeName}");
+                    if (battleManager.GetEnemyPokemonName() != pokeName)
+                    {
+                        battleManager.SetOpponentPokemon(pokeName);
+                        AddChatMessage("System", $"Opponent chose {pokeName}");
+                    }
                 }
             }
         }
         else if (type == "ATTACK_ANNOUNCE")
         {
             string move = ParseValue(rawData, "move_name");
-            
-            // [NEW] Log it for everyone (Players + Spectators)
-            // This ensures Spectators see the text log
-
             if (battleManager != null) battleManager.OnOpponentAttackAnnounce(move);
         }
         else if (type == "DEFENSE_ANNOUNCE")
@@ -229,11 +241,9 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "CALCULATION_REPORT")
         {
-            string attackerName = ParseValue(rawData, "attacker"); // [NEW] Parse Name
+            string attackerName = ParseValue(rawData, "attacker"); 
             int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
             int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-            
-            // Pass attackerName to the function
             if (battleManager != null) battleManager.OnCalculationReport(attackerName, dmg, hp);
         }
         else if (type == "RESOLUTION_REQUEST")
@@ -249,18 +259,20 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
-    // --- SENDING FUNCTIONS (Using Reliable Send + Correct Seq) ---
+    // --- SENDING FUNCTIONS ---
 
     public void SendHandshakeRequest()
     {
-        string payload = $"message_type: HANDSHAKE_REQUEST\nsequence_number: {GetNextSeq()}";
+        string payload = $"message_type: HANDSHAKE_REQUEST\n" +
+                         $"username: {myUsername}\n" +
+                         $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
 
     public void SendHandshakeResponse()
     {
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {Random.Range(1000, 9999)}\n" +
+                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
@@ -291,12 +303,12 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft, int attackerHpLeft) // <--- Add argument
+    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft, int attackerHpLeft) 
     {
         string payload = $"message_type: CALCULATION_REPORT\n" +
                          $"attacker: {attackerName}\n" +
                          $"move_used: {moveUsed}\n" +
-                         $"remaining_health: {attackerHpLeft}\n" + // <--- ADDED THIS LINE
+                         $"remaining_health: {attackerHpLeft}\n" +
                          $"damage_dealt: {damage}\n" +
                          $"defender_hp_remaining: {hpLeft}\n" +
                          $"status_message: Effective\n" +
@@ -334,17 +346,24 @@ public class UDPChatManager : MonoBehaviour
 
     private void SendChatMessage(string messageText)
     {
-        // 1. Send Network Packet
         string payload = $"message_type: CHAT_MESSAGE\n" +
                          $"sender_name: {myUsername}\n" +
                          $"content_type: TEXT\n" +
                          $"message_text: {messageText}\n" +
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
-
-        // 2. Show Locally (Add to Queue as a Command)
-        // Format: TEXT_CMD | SenderName | Message
         chatQueue.Enqueue($"TEXT_CMD|Me|{messageText}");
+    }
+
+    private void SendSystemMessage(string messageText)
+    {
+        string payload = $"message_type: CHAT_MESSAGE\n" +
+                         $"sender_name: System\n" +
+                         $"content_type: TEXT\n" +
+                         $"message_text: {messageText}\n" +
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+        chatQueue.Enqueue($"TEXT_CMD|System|{messageText}"); 
     }
 
     public void SendStickerMessage(string base64Data)
@@ -355,14 +374,11 @@ public class UDPChatManager : MonoBehaviour
                          $"sticker_data: {base64Data}\n" +
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
-        
-        // Show Locally
         chatQueue.Enqueue($"STICKER_CMD|Me|{base64Data}");
     }
 
     // --- LOW LEVEL UDP + ACK LOGIC ---
 
-    // [FIX] Monotonically Increasing Integer
     private int GetNextSeq() 
     { 
         localSequenceNumber++;
@@ -372,39 +388,39 @@ public class UDPChatManager : MonoBehaviour
     private void SendReliablePacket(string payload)
     {
         int seq = int.Parse(ParseValue(payload, "sequence_number"));
-        byte[] bytes = Encoding.UTF8.GetBytes(payload);
-
+        
         if (verboseMode) Debug.Log($"[SENDING]:\n{payload}\n----------------");
 
-        // 1. Send to Main Opponent (Player 2)
+        // [FIX] Add to pending list for MAIN TARGET
         if (!string.IsNullOrEmpty(targetIP))
+        {
+            AddToPending(seq, payload, new IPEndPoint(IPAddress.Parse(targetIP), targetPort));
+        }
+
+        // [FIX] Add to pending list for SPECTATORS (Now reliable!)
+        foreach (var spec in spectators)
+        {
+            AddToPending(seq, payload, spec);
+        }
+    }
+
+    private void AddToPending(int seq, string payload, IPEndPoint dest)
+    {
+        lock (pendingPackets)
         {
             pendingPackets.Add(new PendingPacket 
             { 
                 sequenceNumber = seq, 
                 payload = payload, 
                 timeSinceLastSend = 0f, 
-                retryCount = 0 
+                retryCount = 0,
+                destination = dest // [NEW] We track the destination
             });
-            SendRawBytes(bytes, targetIP, targetPort);
         }
-
-        // 2. Forward to ALL Spectators
-        foreach (var spec in spectators)
-        {
-            try { chatClient.Send(bytes, bytes.Length, spec); } catch { }
-        }
+        // Send immediately first time
+        SendRawBytes(Encoding.UTF8.GetBytes(payload), dest);
     }
 
-    private void SendAck(int seqToAck)
-    {
-        // ACK doesn't need a sequence number itself (or it uses a special one)
-        // RFC 5.1 says "send an ACK message with the corresponding ack_number"
-        string payload = $"message_type: ACK\nack_number: {seqToAck}";
-        SendRawBytes(Encoding.UTF8.GetBytes(payload));
-    }
-
-    // Overload SendAck to reply to a specific person (Spectator OR Player)
     private void SendAck(int seqToAck, IPEndPoint target)
     {
         string payload = $"message_type: ACK\nack_number: {seqToAck}";
@@ -412,40 +428,36 @@ public class UDPChatManager : MonoBehaviour
         try { chatClient.Send(bytes, bytes.Length, target); } catch {}
     }
 
-    // Send the handshake response specifically to a new spectator
     private void SendHandshakeResponseTo(IPEndPoint target)
     {
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {Random.Range(1000, 9999)}\n" +
+                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
                          $"sequence_number: {GetNextSeq()}";
         
-        byte[] bytes = Encoding.UTF8.GetBytes(payload);
-        try { chatClient.Send(bytes, bytes.Length, target); } catch {}
-        
-        if(verboseMode) Debug.Log($"[SENT SPECTATOR RESPONSE] to {target.Address}");
+        // Handshakes to spectators should also be reliable to ensure they connect
+        AddToPending(GetNextSeq(), payload, target);
     }
 
-    private void SendRawBytes(byte[] bytes, string ip, int port)
+    private void SendRawBytes(byte[] bytes, IPEndPoint endPoint)
     {
         try
         {
-            if (!string.IsNullOrEmpty(ip))
+            if (endPoint != null)
             {
-                IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-                chatClient.Send(bytes, bytes.Length, endPoint);
+                // [FIX] CRITICAL: Lock the socket so Background Relay and Main Thread don't fight
+                lock (socketLock) 
+                {
+                    chatClient.Send(bytes, bytes.Length, endPoint);
+                }
             }
         }
-        catch (System.Exception e) 
-        { 
-            Debug.LogError($"Send Error to {ip}: {e.Message}"); 
-        }
+        catch (System.Exception e) { Debug.LogError($"Send Error: {e.Message}"); }
     }
 
-    // 2. The original version (Keeps other parts of code working)
-    private void SendRawBytes(byte[] bytes)
+    // Helper for old calls
+    private void SendRawBytes(byte[] bytes, string ip, int port)
     {
-        // Just forward to the main target
-        SendRawBytes(bytes, targetIP, targetPort);
+        SendRawBytes(bytes, new IPEndPoint(IPAddress.Parse(ip), port));
     }
 
     private void ReceiveChatData()
@@ -458,32 +470,37 @@ public class UDPChatManager : MonoBehaviour
                 byte[] data = chatClient.Receive(ref remoteEP);
                 string text = Encoding.UTF8.GetString(data);
                 string msgType = ParseValue(text, "message_type");
-                string senderID = remoteEP.ToString(); // IP:Port
+                string senderID = remoteEP.ToString(); 
 
-                // 1. [HOST] Identify Player 2 (Joiner)
                 if (isHosting && !spectators.Contains(remoteEP))
                 {
                     if (string.IsNullOrEmpty(targetIP) && msgType == "HANDSHAKE_REQUEST") 
                     {
                         targetIP = remoteEP.Address.ToString();
                         targetPort = remoteEP.Port; 
-                        AddChatMessage("System", $"Player 2 Connected from {targetIP}");
+                        
+                        string joinerName = ParseValue(text, "username");
+                        if (string.IsNullOrEmpty(joinerName)) joinerName = "Player 2";
+                        
+                        SendSystemMessage($"{joinerName} has challenged {myUsername} into a battle!");
                     }
                 }
 
-                // 2. Handle ACKs
                 if (msgType == "ACK")
                 {
                     int ackNum = int.Parse(ParseValue(text, "ack_number"));
-                    lock(pendingPackets) pendingPackets.RemoveAll(p => p.sequenceNumber == ackNum);
+                    
+                    // [FIX] Remove packet only for THIS specific sender
+                    lock(pendingPackets) 
+                    {
+                        pendingPackets.RemoveAll(p => p.sequenceNumber == ackNum && p.destination.ToString() == remoteEP.ToString());
+                    }
                     continue; 
                 }
 
-                // 3. Send Immediate ACK
                 string seqStr = ParseValue(text, "sequence_number");
                 if (!string.IsNullOrEmpty(seqStr)) SendAck(int.Parse(seqStr), remoteEP);
 
-                // 4. Duplicate Check
                 int seq = string.IsNullOrEmpty(seqStr) ? 0 : int.Parse(seqStr);
                 if (!receivedSequencesPerUser.ContainsKey(senderID)) receivedSequencesPerUser[senderID] = new HashSet<int>();
                 if (receivedSequencesPerUser[senderID].Contains(seq)) continue;
@@ -491,65 +508,61 @@ public class UDPChatManager : MonoBehaviour
 
                 if (verboseMode) Debug.Log($"<color=green>[RECEIVED]</color> from {senderID}:\n{text}\n----------------");
 
-                // 5. [HOST FIX] Relay Logic for ALL Message Types (except Handshakes)
-                // If I am host, and this is NOT a private handshake/spectator request...
                 if (isHosting && msgType != "SPECTATOR_REQUEST" && msgType != "HANDSHAKE_REQUEST" && msgType != "HANDSHAKE_RESPONSE")
                 {
-                    HostRelay(text, senderID);
-                }
-
-                // --- HANDLERS ---
-
-                if (msgType == "SPECTATOR_REQUEST")
-                {
-                    if (!spectators.Contains(remoteEP))
-                    {
-                        spectators.Add(remoteEP);
-                        AddChatMessage("System", $"Spectator joined: {remoteEP.Address}");
-                        
-                        // Ack Connection
-                        string resp = $"message_type: HANDSHAKE_RESPONSE\nseed: {Random.Range(0,999)}\nsequence_number: {GetNextSeq()}";
-                        chatClient.Send(Encoding.UTF8.GetBytes(resp), resp.Length, remoteEP);
-
-                        // Sync Names
-                        if (battleManager != null)
-                        {
-                            string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
-                            chatClient.Send(Encoding.UTF8.GetBytes(p1), p1.Length, remoteEP);
-
-                            string enemyName = battleManager.GetEnemyPokemonName();
-                            if (enemyName != "Unknown")
-                            {
-                                string p2 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {enemyName}\nsequence_number: {GetNextSeq()}";
-                                chatClient.Send(Encoding.UTF8.GetBytes(p2), p2.Length, remoteEP);
-                            }
-                        }
-                    }
-                    continue;
+                    HostRelay(text, remoteEP);
                 }
 
                 if (msgType == "CHAT_MESSAGE")
                 {
                     string sender = ParseValue(text, "sender_name");
                     string contentType = ParseValue(text, "content_type");
+                    
                     if (contentType == "STICKER") chatQueue.Enqueue($"STICKER_CMD|{sender}|{ParseValue(text, "sticker_data")}");
                     else chatQueue.Enqueue($"TEXT_CMD|{sender}|{ParseValue(text, "message_text")}");
+                    continue; 
                 }
-                else 
+
+                if (msgType == "SPECTATOR_REQUEST")
                 {
-                    // Process Battle Message locally
-                    battleEventQueue.Enqueue(text);
+                    if (!spectators.Contains(remoteEP))
+                    {
+                        spectators.Add(remoteEP);
+                        
+                        string specName = ParseValue(text, "username");
+                        if (string.IsNullOrEmpty(specName)) specName = "A Spectator";
+
+                        SendSystemMessage($"{specName} has joined as spectator.");
+                        SendHandshakeResponseTo(remoteEP);
+
+                        if (battleManager != null)
+                        {
+                            string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
+                            AddToPending(GetNextSeq(), p1, remoteEP); // Reliable Setup
+
+                            string enemyName = battleManager.GetEnemyPokemonName();
+                            if (enemyName != "Unknown")
+                            {
+                                string p2 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {enemyName}\nsequence_number: {GetNextSeq()}";
+                                AddToPending(GetNextSeq(), p2, remoteEP); // Reliable Setup
+                            }
+                        }
+                    }
+                    continue;
                 }
+
+                battleEventQueue.Enqueue(text);
             }
             catch (System.Exception e) { Debug.LogError("UDP Error: " + e.Message); }
         }
     }
+
     // --- UI & UTILS ---
 
     public void OnClick_HostGame()
     {
         isHosting = true;
-        if(inputUsername != null) myUsername = inputUsername.text;
+        if(inputUsername != null && inputUsername.text.Length > 0) myUsername = inputUsername.text;
         SetupChatSocket();
         panelMenu.SetActive(false);
         panelChat.SetActive(true);
@@ -561,7 +574,7 @@ public class UDPChatManager : MonoBehaviour
     {
         targetIP = ip;
         targetPort = chatPort; 
-        if(inputUsername != null) myUsername = inputUsername.text;
+        if(inputUsername != null && inputUsername.text.Length > 0) myUsername = inputUsername.text;
         SetupChatSocket();
         panelMenu.SetActive(false);
         panelChat.SetActive(true);
@@ -580,19 +593,10 @@ public class UDPChatManager : MonoBehaviour
         {
             if (chatClient != null) chatClient.Close();
 
-            try 
-            {
-                // Try to grab the fixed port (Host/Joiner usually get this)
-                chatClient = new UdpClient(chatPort); 
-            }
-            catch (SocketException) 
-            { 
-                // If 8000 is taken (Localhost testing), grab a random free port
-                chatClient = new UdpClient(0); 
-                Debug.Log($"Port {chatPort} busy, listening on random port: {((IPEndPoint)chatClient.Client.LocalEndPoint).Port}");
-            }
+            try { chatClient = new UdpClient(chatPort); }
+            catch (SocketException) { chatClient = new UdpClient(0); }
 
-            // Crucial: Allow this socket to send broadcasts (needed for discovery)
+            chatClient.Client.ReceiveBufferSize = 1024 * 1024;
             chatClient.EnableBroadcast = true;
 
             receiveThread = new Thread(ReceiveChatData);
@@ -656,19 +660,26 @@ public class UDPChatManager : MonoBehaviour
 
     public void AddChatMessage(string sender, string msg)
     {
-        // Don't bake "Sender: " into the string here.
-        // Just send the command so ProcessQueues calls SpawnText(sender, msg)
         chatQueue.Enqueue($"TEXT_CMD|{sender}|{msg}");
     }
 
     private string ParseValue(string raw, string key)
+{
+    foreach (string line in raw.Split('\n'))
     {
-        foreach(string line in raw.Split('\n'))
-        {
-            if (line.StartsWith(key + ":")) return line.Substring(key.Length + 1).Trim();
-        }
-        return "";
+        string trimmed = line.Trim();
+
+        if (trimmed.StartsWith(key + ":"))
+            return trimmed.Substring(key.Length + 1).Trim();
+
+        if (trimmed.StartsWith(key + " :"))
+            return trimmed.Substring(key.Length + 2).Trim();
+
+        if (trimmed.StartsWith(key + ":"))
+            return trimmed.Substring(key.Length + 1).Trim();
     }
+    return "";
+}
     
     private void OnApplicationQuit()
     {
@@ -694,66 +705,59 @@ public class UDPChatManager : MonoBehaviour
     {
         if (stickerMessagePrefab == null || chatContent == null) return;
 
-        // 1. Decode Base64 string back to Bytes
         byte[] imageBytes = System.Convert.FromBase64String(base64Data);
-
-        // --- NEW: SAVE TO FILE (Rubric Requirement) ---
-        // This saves the image to your computer's AppData folder
-        string fileName = $"Sticker_{System.DateTime.Now.Ticks}.png";
-        string path = System.IO.Path.Combine(Application.persistentDataPath, fileName);
-        System.IO.File.WriteAllBytes(path, imageBytes);
-        
-        if (verboseMode) Debug.Log($"[FILE SAVED] Sticker saved to: {path}");
-        // ----------------------------------------------
-
-        // 2. Create a Texture and load bytes
         Texture2D tex = new Texture2D(2, 2);
         tex.LoadImage(imageBytes); 
-
-        // 3. Convert Texture to Sprite
         Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
 
-        // 4. Spawn UI
+        // Text above sticker
         GameObject msgObj = Instantiate(textMessagePrefab, chatContent);
-        msgObj.GetComponent<TMP_Text>().text = $"<color=blue>{sender}</color> sent a sticker:";
+        TMP_Text tmp = msgObj.GetComponent<TMP_Text>();
+        if (tmp != null) tmp.text = $"<color=blue>{sender}:</color> sent a sticker!";
 
+        // Sticker image
         GameObject imgObj = Instantiate(stickerMessagePrefab, chatContent);
-        imgObj.GetComponent<Image>().sprite = sprite;
+        Image img = imgObj.GetComponent<Image>();
+        if (img != null) img.sprite = sprite;
 
+        // Force size to fit nicely
+        LayoutElement layout = imgObj.GetComponent<LayoutElement>();
+        if (layout == null) layout = imgObj.AddComponent<LayoutElement>();
+        layout.preferredWidth = 150;
+        layout.preferredHeight = 150;
+
+        // Scroll down
         Canvas.ForceUpdateCanvases();
         ScrollRect scrollRect = chatContent.parent.parent.GetComponent<ScrollRect>();
-        if(scrollRect != null) scrollRect.verticalNormalizedPosition = 0f;
+        if (scrollRect != null) scrollRect.verticalNormalizedPosition = 0f;
     }
 
     public void JoinAsSpectator(string targetIP)
     {
-        Debug.Log($"Attempting to spectate {targetIP}...");
+        if(inputUsername != null && inputUsername.text.Length > 0) myUsername = inputUsername.text; 
         
-        // 1. Setup Socket
         SetupChatSocket();
         isSpectator = true;
-        
-        // 2. Set Target (Who are we listening to?)
         this.targetIP = targetIP;
-        this.targetPort = chatPort; // Assuming default port
+        this.targetPort = chatPort; 
 
-        // 3. Send Request
-        string payload = $"message_type: SPECTATOR_REQUEST\nsequence_number: {GetNextSeq()}";
+        string payload = $"message_type: SPECTATOR_REQUEST\n" +
+                         $"username: {myUsername}\n" +
+                         $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
         
-        // 4. UI Update
         panelMenu.SetActive(false);
         panelChat.SetActive(true);
         AddChatMessage("System", "Sent Spectator Request...");
     }
 
-    public TMP_InputField spectateIpInput; // Drag Input Field here
+    public TMP_InputField spectateIpInput;
 
     public void OnClick_Spectate() {
         if(spectateIpInput != null && spectateIpInput.text.Length > 0)
             JoinAsSpectator(spectateIpInput.text);
         else
-            JoinAsSpectator("127.0.0.1"); // Default for testing
+            JoinAsSpectator("127.0.0.1"); 
     }
 
     private void RelayToSpectators(string rawData)
@@ -765,43 +769,37 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
-    // [NEW] Smart Relay that fixes Sequence Number collisions
-    private void HostRelay(string originalText, string senderID)
+    private void HostRelay(string originalText, IPEndPoint senderEP)
     {
-        // 1. Remove the old sequence number
         string cleanMsg = "";
         string[] lines = originalText.Split('\n');
-        foreach(var line in lines)
+        foreach (var line in lines)
         {
             if (!line.StartsWith("sequence_number") && !string.IsNullOrWhiteSpace(line))
-            {
                 cleanMsg += line + "\n";
-            }
         }
 
-        // 2. Add Host's new sequence number
-        string newPayload = cleanMsg + $"sequence_number: {GetNextSeq()}";
-        byte[] bytes = Encoding.UTF8.GetBytes(newPayload);
+        // FIXED: Generate ONE sequence number
+        int relaySeq = GetNextSeq();
+        string newPayload = cleanMsg + $"sequence_number: {relaySeq}";
 
-        // 3. Logic: Where to send?
-        // If message came from Joiner (TargetIP) -> Send to ALL Spectators
-        if (senderID.StartsWith(targetIP))
+        List<IPEndPoint> allTargets = new List<IPEndPoint>(spectators);
+        if (!string.IsNullOrEmpty(targetIP))
         {
-            foreach (var spec in spectators) 
-                try { chatClient.Send(bytes, bytes.Length, spec); } catch {}
-        }
-        // If message came from a Spectator -> Send to Joiner AND Other Spectators
-        else 
-        {
-            // Send to Joiner
-            if (!string.IsNullOrEmpty(targetIP)) SendRawBytes(bytes, targetIP, targetPort);
-
-            // Send to OTHER Spectators
-            foreach (var spec in spectators)
+            try
             {
-                // Don't send back to the sender!
-                if (!senderID.Contains(spec.Address.ToString()))
-                    try { chatClient.Send(bytes, bytes.Length, spec); } catch {}
+                IPEndPoint joinerEP = new IPEndPoint(IPAddress.Parse(targetIP), targetPort);
+                if (!allTargets.Contains(joinerEP)) allTargets.Add(joinerEP);
+            }
+            catch { }
+        }
+
+        foreach (IPEndPoint target in allTargets)
+        {
+            if (!target.Equals(senderEP))
+            {
+                // FIXED: DO NOT generate a new seq number here
+                AddToPending(relaySeq, newPayload, target);
             }
         }
     }
