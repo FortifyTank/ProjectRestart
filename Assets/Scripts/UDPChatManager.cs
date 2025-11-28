@@ -177,6 +177,13 @@ public class UDPChatManager : MonoBehaviour
             string joinerName = ParseValue(rawData, "username");
             if (string.IsNullOrEmpty(joinerName)) joinerName = "Unknown Player";
 
+            // [FIX] Store the name!
+            if (battleManager != null) 
+            {
+                battleManager.enemyUsername = joinerName;
+                battleManager.myUsername = myUsername;
+            }
+
             if (!isBattleSetup)
             {
                 AddChatMessage("System", $"{joinerName} Connected! Sending Handshake Response...");
@@ -191,7 +198,17 @@ public class UDPChatManager : MonoBehaviour
             }
         }
         else if (type == "HANDSHAKE_RESPONSE")
-        {
+        {   
+            string hostName = ParseValue(rawData, "username"); // [NEW] Parse Host Name
+            if (string.IsNullOrEmpty(hostName)) hostName = "Host";
+
+            // [FIX] Store the name!
+            if (battleManager != null) 
+            {
+                battleManager.enemyUsername = hostName;
+                battleManager.myUsername = myUsername;
+            }
+
             string seed = ParseValue(rawData, "seed");
             
             if (!isBattleSetup)
@@ -212,12 +229,10 @@ public class UDPChatManager : MonoBehaviour
                     if (battleManager.GetMyPokemonName() == "Unknown" || battleManager.GetMyPokemonName() == "Bulbasaur")
                     {
                         battleManager.SetMyPokemon(pokeName); 
-                        AddChatMessage("System", $"Host is using {pokeName}");
                     }
                     else
                     {
                         battleManager.SetOpponentPokemon(pokeName);
-                        AddChatMessage("System", $"Player 2 is using {pokeName}");
                     }
                 }
                 else
@@ -225,7 +240,6 @@ public class UDPChatManager : MonoBehaviour
                     if (battleManager.GetEnemyPokemonName() != pokeName)
                     {
                         battleManager.SetOpponentPokemon(pokeName);
-                        AddChatMessage("System", $"Opponent chose {pokeName}");
                     }
                 }
             }
@@ -309,9 +323,11 @@ public class UDPChatManager : MonoBehaviour
 
     public void SendHandshakeResponse()
     {
+        // [FIX] Added 'username' so the Joiner knows my name!
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
-                         $"sequence_number: {GetNextSeq()}";
+                        $"username: {myUsername}\n" + 
+                        $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
+                        $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
 
@@ -330,8 +346,7 @@ public class UDPChatManager : MonoBehaviour
         string payload = $"message_type: ATTACK_ANNOUNCE\n" +
                          $"move_name: {moveName}\n" +
                          $"sequence_number: {GetNextSeq()}";
-        SendReliablePacket(payload);
-        AddChatMessage("System", $"You used {moveName}!");
+        SendReliablePacket(payload);;
     }
 
     public void SendDefenseAnnounce()
@@ -404,6 +419,17 @@ public class UDPChatManager : MonoBehaviour
         chatQueue.Enqueue($"TEXT_CMD|System|{messageText}"); 
     }
 
+    public void SendSystemMessagePacket(string text)
+    {
+        // Sends a chat message labeled as "System" to everyone
+        string payload = $"message_type: CHAT_MESSAGE\n" +
+                         $"sender_name: System\n" +
+                         $"content_type: TEXT\n" +
+                         $"message_text: {text}\n" +
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+    }
+
     public void SendStickerMessage(string base64Data)
     {
         string payload = $"message_type: CHAT_MESSAGE\n" +
@@ -469,10 +495,9 @@ public class UDPChatManager : MonoBehaviour
     private void SendHandshakeResponseTo(IPEndPoint target)
     {
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
-                         $"sequence_number: {GetNextSeq()}";
-        
-        // Handshakes to spectators should also be reliable to ensure they connect
+                        $"username: {myUsername}\n" + // [FIX] Added username
+                        $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
+                        $"sequence_number: {GetNextSeq()}";
         AddToPending(GetNextSeq(), payload, target);
     }
 
@@ -574,7 +599,9 @@ public class UDPChatManager : MonoBehaviour
                         SendHandshakeResponseTo(remoteEP);
 
                         if (battleManager != null)
-                        {
+                        {   
+                            battleManager.SendSpectatorUpdate();
+
                             string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
                             AddToPending(GetNextSeq(), p1, remoteEP); // Reliable Setup
 

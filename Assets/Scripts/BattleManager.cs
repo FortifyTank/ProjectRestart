@@ -24,6 +24,8 @@ public class BattleManager : MonoBehaviour
     public List<Pokemon> myParty = new List<Pokemon>();
     public List<Pokemon> enemyParty = new List<Pokemon>(); // For the host to track the opponent
     public int myActiveIndex = 0;
+    public string myUsername = "Me";
+    public string enemyUsername = "Opponent";
     private bool isGameOver = false;
     
     // State tracking for handshake
@@ -76,40 +78,45 @@ public class BattleManager : MonoBehaviour
             return; 
         }
         // -----------------------------
+        // 2. BUILD MY PARTY (6v6 Logic)
+        myParty.Clear();
+        enemyParty.Clear(); // We will fill this as we discover enemies
 
-        // 2. GET POKEMON (Standard Player Logic)
-        string myName = PokemonSelector.UserSelection; 
+        // A. Get the user's chosen starter
+        string starterName = PokemonSelector.UserSelection;
+        if (string.IsNullOrEmpty(starterName) || PokemonDatabase.GetPokemon(starterName) == null) 
+            starterName = "Pikachu";
+
+        myParty.Add(PokemonDatabase.GetPokemon(starterName));
+
+        // B. Fill the rest with 5 Random Pokemon for testing
+        // (You can change this later to a specific list if you want)
+        string[] randomPool = { "Charizard", "Blastoise", "Venusaur", "Gengar", "Snorlax", "Dragonite", "Mewtwo", "Eevee" };
         
-        if (string.IsNullOrEmpty(myName) || PokemonDatabase.GetPokemon(myName) == null)
+        for (int i = 0; i < 5; i++)
         {
-            myName = "Pikachu"; 
-            Debug.LogWarning("Invalid selection, defaulting to Pikachu");
+            string randName = randomPool[UnityEngine.Random.Range(0, randomPool.Length)];
+            myParty.Add(PokemonDatabase.GetPokemon(randName));
         }
 
-        Pokemon p1 = PokemonDatabase.GetPokemon(myName);
-        // Dummy enemy for now
-        Pokemon p2 = PokemonDatabase.GetPokemon("Bulbasaur"); 
+        // C. Set the Active Pokemon
+        myActiveIndex = 0;
+        myPokemon = myParty[0]; // The single variable now points to the first party member
 
-        if (isHost)
-        {
-            myPokemon = p1; 
-            enemyPokemon = p2; 
-            SetButtonsInteractable(true);
-        }
-        else
-        {
-            myPokemon = p2; 
-            enemyPokemon = p1;
-            SetButtonsInteractable(false);
-        }
-        
-        myPokemon = p1;
-        enemyPokemon = p2;
+        // 3. ENEMY SETUP
+        // Start with a dummy. When we receive BATTLE_SETUP, we will overwrite this.
+        enemyPokemon = PokemonDatabase.GetPokemon("Bulbasaur"); 
 
+        // 4. UI & NETWORKING
         UpdateBattleUI();
         
-        // Standard Players send their info
+        // Send just my ACTIVE pokemon to the enemy
         if (networkManager != null) networkManager.SendBattleSetup(myPokemon.name);
+
+        // [NEW] Announce the starter to everyone!
+        BroadcastLog($"{myUsername} sent out {myPokemon.name}!");
+
+        SetButtonsInteractable(isHost);
     }
 
     void UpdateBattleUI()
@@ -142,24 +149,22 @@ public class BattleManager : MonoBehaviour
         if (isGameOver) return;
         string moveName = myPokemon.moves[moveIndex];
         lastMoveUsedByMe = moveName;
-        
-        // Consistent format: "Charizard used Tackle!"
-        networkManager.AddChatMessage("Battle", $"{myPokemon.name} used {moveName}!");
-        
+
+        // [FIX] New Format + Broadcast to everyone (including Spectators)
+        string log = $"{myUsername}'s {myPokemon.name} used {moveName}!";
+        BroadcastLog(log);
+
         if (networkManager != null) networkManager.SendAttackAnnounce(moveName);
         SetButtonsInteractable(false);
+        SendSpectatorUpdate();
     }
     public void OnOpponentAttackAnnounce(string moveName)
     {
         // SPECTATOR: Just say a move happened (Since we can't be 100% sure who sent it without checking IP)
         if (networkManager.isSpectator) 
         {
-            networkManager.AddChatMessage("Battle", $"A Pokemon used {moveName}!");
             return;
         }
-        
-        // PLAYER: Say the specific enemy name
-        networkManager.AddChatMessage("Battle", $"{enemyPokemon.name} used {moveName}!");
 
         if (isGameOver) return;
         pendingMoveName = moveName;
@@ -183,6 +188,9 @@ public class BattleManager : MonoBehaviour
                 enemyPokemon.hp,     // Defender HP Remaining
                 myPokemon.hp         // [NEW] Attacker HP Remaining (Required by RFC)
             );
+
+            // [FIX] Tell Spectators that I just dealt damage!
+            SendSpectatorUpdate();
         }
     }
 
@@ -233,8 +241,35 @@ public class BattleManager : MonoBehaviour
 
             if (myPokemon.hp <= 0)
             {
-                if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
-                OnGameOver(enemyPokemon.name);
+                // 1. My Pokemon Fainted. Check if I have others.
+                bool hasAlivePokemon = false;
+                int nextIndex = -1;
+
+                for (int i = 0; i < myParty.Count; i++)
+                {
+                    if (myParty[i].hp > 0)
+                    {
+                        hasAlivePokemon = true;
+                        nextIndex = i;
+                        break; // Found one!
+                    }
+                }
+
+                if (hasAlivePokemon)
+                {
+                    // 2. I have survivors! Auto-switch to the next one.
+                    Debug.Log($"{myPokemon.name} fainted! Switching to {myParty[nextIndex].name}...");
+                    
+                    string log = $"{myUsername}'s {myPokemon.name} fainted!";
+                    BroadcastLog(log);
+                    PerformSwitch(nextIndex); // We will write this function next!
+                }
+                else
+                {
+                    // 3. Everyone is dead. I truly lost.
+                    if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
+                    OnGameOver(enemyPokemon.name);
+                }
             }
             else SetButtonsInteractable(true); 
         }
@@ -402,5 +437,47 @@ public class BattleManager : MonoBehaviour
                 enemyPokemon.name, enemyPokemon.hp, enemyPokemon.maxHp
             );
         }
+    }
+
+    public void PerformSwitch(int newIndex)
+    {
+        if (newIndex < 0 || newIndex >= myParty.Count) return;
+        if (myParty[newIndex].hp <= 0) return; // Cannot switch to fainted mon
+
+        // 1. Update Data
+        myActiveIndex = newIndex;
+        myPokemon = myParty[newIndex]; // Point the shortcut to the new mon
+
+        // 2. Update UI
+        UpdateBattleUI();
+        
+        string log = $"{myUsername} sent out {myPokemon.name}!";
+        BroadcastLog(log);
+
+        // 3. Network: Tell Opponent & Spectators
+        // We need to add a "SWITCH_ANNOUNCE" packet type.
+        if (networkManager != null)
+        {
+            // Reuse BATTLE_SETUP for now, or create a new one. 
+            // Using BATTLE_SETUP is the easiest "lazy fix" because it already updates the enemy view!
+            networkManager.SendBattleSetup(myPokemon.name);
+            
+            // Also update spectators immediately
+            SendSpectatorUpdate();
+        }
+        
+        // 4. Enable Buttons (if it's my turn, though usually switching takes a turn)
+        SetButtonsInteractable(true); 
+        SendSpectatorUpdate();
+    }
+
+    public void BroadcastLog(string text)
+    {
+        // 1. Show it on my screen
+        networkManager.AddChatMessage("System", text); 
+        
+        // 2. Send it to Everyone (Opponent + Spectators)
+        // We use SendSystemMessage which we will add to UDPChatManager in a second
+        if (networkManager != null) networkManager.SendSystemMessagePacket(text);
     }
 }
