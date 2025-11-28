@@ -21,10 +21,29 @@ public class BattleManager : MonoBehaviour
     public Button[] moveButtons; 
     public TMP_Text[] moveButtonLabels; 
 
-    private Pokemon myPokemon;
-    private Pokemon enemyPokemon;
+    [Header("Party Data")]
+    public List<Pokemon> myParty = new List<Pokemon>();    // [NEW] The 6 Pokemon
+    public List<Pokemon> enemyParty = new List<Pokemon>(); // [NEW] The Opponent's team
+
+    // Computed Properties so the rest of your code doesn't break!
+    // These act as "shortcuts" to the active pokemon.
+    public Pokemon myPokemon 
+    { 
+        get { return (myParty.Count > myActiveIndex) ? myParty[myActiveIndex] : null; } 
+        set { /* Read-only mostly, used for initialization logic */ } 
+    }
+    
+    public Pokemon enemyPokemon 
+    { 
+        get { return (enemyParty.Count > enemyActiveIndex) ? enemyParty[enemyActiveIndex] : null; }
+        set { /* Read-only */ }
+    }
     private bool isGameOver = false;
     
+    // Pointers to who is currently fighting
+    private int myActiveIndex = 0;
+    private int enemyActiveIndex = 0;
+
     // State tracking for handshake
     private string pendingMoveName = "";
     private string lastMoveUsedByMe = "";
@@ -40,71 +59,63 @@ public class BattleManager : MonoBehaviour
         isGameOver = false;
         Debug.Log($"Setting up battle. Am I Host? {isHost}");
 
-        // 1. Load the CSV Database
-        PokemonDatabase.LoadData();
+        // 1. Ensure Data is Loaded
+        if (!PokemonDatabase.IsLoaded) PokemonDatabase.LoadData();
 
-        // --- [NEW] SPECTATOR LOGIC ---
+        // 2. Clear old data
+        myParty.Clear();
+        enemyParty.Clear();
+        myActiveIndex = 0;
+        enemyActiveIndex = 0;
+
+        // --- [NEW] GENERATE 6v6 PARTIES ---
+        
+        // Slot 1: The User's Choice (The Lead)
+        string leadName = PokemonSelector.UserSelection;
+        if (string.IsNullOrEmpty(leadName) || PokemonDatabase.GetPokemon(leadName) == null)
+            leadName = "Pikachu";
+
+        myParty.Add(PokemonDatabase.GetPokemon(leadName));
+
+        // Slot 2-6: Random Fills (For now, until we build a Party Selector UI)
+        FillPartyWithRandoms(myParty, 5);
+
+        // Enemy Party: Fill with Dummy/Randoms initially
+        // (We will update their Lead when we get the BATTLE_SETUP network packet)
+        FillPartyWithRandoms(enemyParty, 6); 
+
+        // ----------------------------------
+
+        // --- SPECTATOR LOGIC ---
         if (networkManager.isSpectator)
         {
-            Debug.Log("Spectator Mode Active: Initializing View...");
-
-            // 1. Create dummies so the UI doesn't crash (Wait for network updates to fill real data)
-            myPokemon = PokemonDatabase.GetPokemon("Bulbasaur");
-            enemyPokemon = PokemonDatabase.GetPokemon("Charmander");
-
-            // 2. Disable Controls completely
+            Debug.Log("Spectator Mode Active...");
             SetButtonsInteractable(false);
-            
-            // Optional: Hide the button area entirely so it looks like a TV stream
-            if (moveButtons.Length > 0 && moveButtons[0] != null)
-            {
-                foreach(var btn in moveButtons) 
-            {
-                if(btn != null) btn.gameObject.SetActive(false);
-            }
-            }
-
-            // 3. Update UI with dummies
             UpdateBattleUI();
-            
-            // 4. IMPORTANT: Return immediately. Spectators do NOT send BATTLE_SETUP packets.
             return; 
         }
-        // -----------------------------
 
-        // 2. GET POKEMON (Standard Player Logic)
-        string myName = PokemonSelector.UserSelection; 
-        
-        if (string.IsNullOrEmpty(myName) || PokemonDatabase.GetPokemon(myName) == null)
-        {
-            myName = "Pikachu"; 
-            Debug.LogWarning("Invalid selection, defaulting to Pikachu");
-        }
-
-        Pokemon p1 = PokemonDatabase.GetPokemon(myName);
-        // Dummy enemy for now
-        Pokemon p2 = PokemonDatabase.GetPokemon("Bulbasaur"); 
-
-        if (isHost)
-        {
-            myPokemon = p1; 
-            enemyPokemon = p2; 
-            SetButtonsInteractable(true);
-        }
-        else
-        {
-            myPokemon = p2; 
-            enemyPokemon = p1;
-            SetButtonsInteractable(false);
-        }
-        
-        myPokemon = p1;
-        enemyPokemon = p2;
+        if (isHost) SetButtonsInteractable(true);
+        else SetButtonsInteractable(false);
 
         UpdateBattleUI();
         
-        // Standard Players send their info
+        // RFC Requirement: Send the name of our LEAD Pokemon
         if (networkManager != null) networkManager.SendBattleSetup(myPokemon.name);
+    }
+
+    // Helper to fill empty slots
+    private void FillPartyWithRandoms(List<Pokemon> party, int count)
+    {
+        // Get all possible names from the database keys
+        List<string> allNames = new List<string>(PokemonDatabase.AllPokemon.Keys);
+        
+        for(int i=0; i<count; i++)
+        {
+            if (allNames.Count == 0) break;
+            string randomName = allNames[Random.Range(0, allNames.Count)];
+            party.Add(PokemonDatabase.GetPokemon(randomName));
+        }
     }
 
     void UpdateBattleUI()
@@ -182,24 +193,24 @@ public class BattleManager : MonoBehaviour
     }
 
     public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining)
-    {   
+    {
         // --- SPECTATOR LOGIC ---
-        if (networkManager.isSpectator) 
+        if (networkManager.isSpectator)
         {
             // Determine who got hit based on who attacked
-            if (attackerName == myPokemon.name) 
+            if (attackerName == myPokemon.name)
             {
-                // Host Attacked -> Joiner (Enemy) took damage
+                // Host Attacked -> Joiner took damage
                 enemyPokemon.hp = hpRemaining;
-                if(enemyHpBar != null) enemyHpBar.value = hpRemaining;
+                if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
             }
             else if (attackerName == enemyPokemon.name)
             {
-                // Joiner Attacked -> Host (My) took damage
+                // Joiner Attacked -> Host took damage
                 myPokemon.hp = hpRemaining;
-                if(playerHpBar != null) playerHpBar.value = hpRemaining;
+                if (playerHpBar != null) playerHpBar.value = hpRemaining;
             }
-            return; 
+            return;
         }
         // -----------------------
 
@@ -209,13 +220,16 @@ public class BattleManager : MonoBehaviour
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
-            
+
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
             {
                 Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
+
                 int myCorrectHp = myPokemon.hp - myCalculatedDamage;
+
                 if (networkManager != null)
                     networkManager.SendResolutionRequest(enemyPokemon.name, pendingMoveName, myCalculatedDamage, myCorrectHp);
+
                 return;
             }
 
@@ -223,19 +237,62 @@ public class BattleManager : MonoBehaviour
             myPokemon.hp = hpRemaining;
             if (playerHpBar != null) playerHpBar.value = hpRemaining;
 
-            if (networkManager != null) networkManager.SendCalculationConfirm();
+            if (networkManager != null)
+                networkManager.SendCalculationConfirm();
+
             pendingMoveName = "";
 
+            // Check faint
             if (myPokemon.hp <= 0)
             {
-                if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
-                OnGameOver(enemyPokemon.name);
+                // 6v6 CHECK: Do I have other healthy Pokémon?
+                bool hasAblePokemon = false;
+                foreach (var poke in myParty)
+                {
+                    if (poke.hp > 0) hasAblePokemon = true;
+                }
+
+                if (!hasAblePokemon)
+                {
+                    // Real Game Over
+                    if (networkManager != null)
+                        networkManager.SendGameOver(enemyPokemon.name);
+
+                    OnGameOver(enemyPokemon.name);
+                }
+                else
+                {
+                    // Only a faint — switch required
+                    Debug.Log("My Pokémon fainted! I need to switch!");
+                    networkManager.AddChatMessage("Battle", $"{myPokemon.name} fainted!");
+
+                    // Simple auto-switch
+                    for (int i = 0; i < myParty.Count; i++)
+                    {
+                        if (myParty[i].hp > 0)
+                        {
+                            myActiveIndex = i;   // Ensure this matches your party system
+                            UpdateBattleUI();
+
+                            // Re-enable buttons
+                            SetButtonsInteractable(true);
+
+                            networkManager.AddChatMessage("Battle",
+                                $"Go! {myParty[myActiveIndex].name}!");
+
+                            break;
+                        }
+                    }
+                }
             }
-            else SetButtonsInteractable(true); 
+            else
+            {
+                SetButtonsInteractable(true);
+            }
         }
         else
         {
-            // I am the attacker, just visual update
+            // Attacker side: just update visuals
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
         }
@@ -280,6 +337,13 @@ public class BattleManager : MonoBehaviour
             return 0;
         }
         MoveData move = MoveDatabase.Moves[moveName];
+
+        // [FIX] Status moves must return 0 damage
+        if (move.category == "Status")
+        {
+            Debug.Log($"[BATTLE] {moveName} is a Status move. No damage dealt.");
+            return 0;
+        }
 
         // 1. Determine Stats (Physical vs Special)
         bool isPhysical = move.category == "Physical";
@@ -335,9 +399,22 @@ public class BattleManager : MonoBehaviour
         Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
         if (p != null)
         {
-            enemyPokemon = p;
+            // [FIX] Networking says this is their lead.
+            // Overwrite Slot 0 with the correct pokemon.
+            if (enemyParty.Count > 0)
+            {
+                enemyParty[0] = p;
+            }
+            else
+            {
+                enemyParty.Add(p);
+            }
+            
+            // Reset active index to 0
+            enemyActiveIndex = 0;
+
             UpdateBattleUI();
-            Debug.Log($"Opponent is using: {pokemonName}");
+            Debug.Log($"Opponent sent Lead: {pokemonName}");
         }
         else
         {
