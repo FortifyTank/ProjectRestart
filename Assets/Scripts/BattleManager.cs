@@ -300,8 +300,10 @@ public class BattleManager : MonoBehaviour
         // We received the "True" stages used by the reporter. 
         // Force our local Pokemon to match them so we don't desync next turn.
 
-        Pokemon attackerMon = (attackerName == myPokemon.name) ? myPokemon : enemyPokemon;
-        Pokemon defenderMon = (attackerName == myPokemon.name) ? enemyPokemon : myPokemon;
+        bool isMe = (networkManager.isHosting == isHostAttacker);
+
+        Pokemon attackerMon = isMe ? myPokemon : enemyPokemon;
+        Pokemon defenderMon = isMe ? enemyPokemon : myPokemon;
         
         // We need to know if the move was Physical or Special to know WHICH stat to sync.
         // We can look up the pending move (if we are defender) or just infer it.
@@ -550,6 +552,8 @@ public class BattleManager : MonoBehaviour
 
         string lookupName = moveName.ToLower();
 
+        if (lookupName.StartsWith("x-") || lookupName == "used-item") return 0;
+
         if (!MoveLoader.Moves.ContainsKey(lookupName)) 
         {
             Debug.LogWarning($"Move '{lookupName}' not found!");
@@ -585,10 +589,14 @@ public class BattleManager : MonoBehaviour
             typeMult = defender.typeMultipliers[moveType];
         }
 
-        // --- LOGIC: Print the message ---
-        if (typeMult > 1.0f) BroadcastLog("It's Super Effective!");
-        else if (typeMult < 1.0f && typeMult > 0f) BroadcastLog("It's not very effective...");
-        else if (typeMult == 0f) BroadcastLog($"It had no effect on {defender.name}!");
+        bool shouldAnnounce = (defender == myPokemon); 
+
+        if (shouldAnnounce)
+        {
+            if (typeMult > 1.0f) BroadcastLog("It's Super Effective!");
+            else if (typeMult < 1.0f && typeMult > 0f) BroadcastLog("It's not very effective...");
+            else if (typeMult == 0f) BroadcastLog($"It had no effect on {defender.name}!");
+        }
 
         // --- Math ---
         // (Power * Atk * Type) / Def
@@ -600,7 +608,22 @@ public class BattleManager : MonoBehaviour
     }
     
     private int PerformAttack(string moveName, Pokemon attacker, Pokemon defender, Slider targetHealthBar)
-    {
+    {   
+        // [NEW] Handle Items gracefully
+        if (moveName.StartsWith("X-") || moveName == "used-item")
+        {
+            // If it's a specific item like "X-Attack", announce it now!
+            if (moveName.StartsWith("X-"))
+            {
+                // Clean up the name "X-Attack" -> "X-Attack"
+                BroadcastLog($"{attacker.name} used {moveName}!");
+            }
+            else
+            {
+                BroadcastLog($"{attacker.name} used an Item!");
+            }
+            return 0; 
+        }
         // 1. Get the Move Data (Fixes the "move undefined" error)
         if (!MoveLoader.Moves.ContainsKey(moveName)) return 0;
         MoveData move = MoveLoader.Moves[moveName];
@@ -1091,8 +1114,7 @@ public class BattleManager : MonoBehaviour
         else if (statName == "Speed") { myPokemon.stageSpeed = Mathf.Clamp(myPokemon.stageSpeed + 2, -6, 6); itemUsesSpeed--; }
 
         // 3. Log & Commit
-        string logMsg = $"{myUsername} used X-{statName}!";
-        BroadcastLog(logMsg);
+        string itemName = $"X-{statName}";
         
         // Use "Used Item" to pass the turn
         CommitAction("used-item", 9999, false); 
@@ -1180,6 +1202,22 @@ public class BattleManager : MonoBehaviour
         ShowMainMenu();
 
         Debug.Log("[TURN END] FORCED RESET: All flags cleared and buttons unlocked.");
+    }
+
+    public void OnEnemySwitch(string newPokemonName)
+    {
+        // 1. If the enemy was dead, this means they finally replaced it!
+        if (enemyPokemon.hp <= 0)
+        {
+            BroadcastLog($"Opponent sent out {newPokemonName}!");
+            
+            // 2. Unlock my buttons so I can fight the new Pokemon
+            SetButtonsInteractable(true);
+            
+            // 3. Reset turn flags just in case
+            hasICommitted = false;
+            hasEnemyCommitted = false;
+        }
     }
 
     public void OnCalculationConfirm()

@@ -242,6 +242,7 @@ public class UDPChatManager : MonoBehaviour
                         battleManager.SetOpponentPokemon(pokeName);
                     }
                 }
+                battleManager.OnEnemySwitch(pokeName);
             }
         }
         else if (type == "COMMIT_TURN")
