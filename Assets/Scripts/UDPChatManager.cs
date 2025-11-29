@@ -244,6 +244,30 @@ public class UDPChatManager : MonoBehaviour
                 }
             }
         }
+        else if (type == "COMMIT_TURN")
+        {
+            // 1. Parse Data
+            string move = ParseValue(rawData, "move_name");
+            int speed = int.Parse(ParseValue(rawData, "speed"));
+            bool isSwitch = bool.Parse(ParseValue(rawData, "is_switch"));
+
+            int tieBreaker = 0;
+            string tbStr = ParseValue(rawData, "tie_breaker");
+            if (!string.IsNullOrEmpty(tbStr)) tieBreaker = int.Parse(tbStr);
+
+            // 2. Tell BattleManager
+            if (battleManager != null)
+            {
+                battleManager.enemyPendingMove = move;
+                battleManager.enemyPendingSpeed = speed;
+                battleManager.isEnemyActionSwitch = isSwitch;
+                battleManager.enemyTieBreaker = tieBreaker; // [NEW] Save it
+                battleManager.hasEnemyCommitted = true;
+                
+                // 3. Try to Resolve
+                battleManager.CheckForResolution();
+            }
+        }
         else if (type == "ATTACK_ANNOUNCE")
         {
             // WRAP START
@@ -265,15 +289,24 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "CALCULATION_REPORT")
         {
-            // WRAP START
-            if (!isSpectator)
+            // [CRITICAL FIX] REMOVED "if (!isSpectator)"
+            // Spectators MUST run this now, because the logic is inside BattleManager!
+
+            string attackerName = ParseValue(rawData, "attacker"); 
+            int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
+            int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
+            
+            // [NEW] Parse the 'is_host' boolean
+            // We use TryParse to be safe (defaults to false if missing)
+            string isHostStr = ParseValue(rawData, "is_host");
+            bool isHost = false;
+            if (!string.IsNullOrEmpty(isHostStr)) bool.TryParse(isHostStr, out isHost);
+
+            if (battleManager != null) 
             {
-                string attackerName = ParseValue(rawData, "attacker"); 
-                int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
-                int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-                if (battleManager != null) battleManager.OnCalculationReport(attackerName, dmg, hp);
+                // [FIX] Pass the 'isHost' boolean to the manager
+                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost);
             }
-            // WRAP END
         }
         else if (type == "RESOLUTION_REQUEST")
         {
@@ -356,16 +389,18 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft, int attackerHpLeft) 
-    {
+    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost)
+{
         string payload = $"message_type: CALCULATION_REPORT\n" +
-                         $"attacker: {attackerName}\n" +
-                         $"move_used: {moveUsed}\n" +
-                         $"remaining_health: {attackerHpLeft}\n" +
-                         $"damage_dealt: {damage}\n" +
-                         $"defender_hp_remaining: {hpLeft}\n" +
-                         $"status_message: Effective\n" +
+                         $"attacker: {attacker}\n" +
+                         $"move_name: {move}\n" +
+                         $"damage_dealt: {dmg}\n" +
+                         $"defender_hp_remaining: {defHp}\n" +
+                         $"attacker_hp_remaining: {attHp}\n" +
+                         $"is_host: {isHost}\n" + // [NEW]
                          $"sequence_number: {GetNextSeq()}";
+
+        // ... existing send logic ...
         SendReliablePacket(payload);
     }
 
@@ -886,5 +921,16 @@ public class UDPChatManager : MonoBehaviour
         {
             SendRawBytes(Encoding.UTF8.GetBytes(payload), spec);
         }
+    }
+
+    public void SendCommitPacket(string move, int speed, bool isSwitch, int tieBreaker)
+    {
+        string payload = $"message_type: COMMIT_TURN\n" +
+                         $"move_name: {move}\n" +
+                         $"speed: {speed}\n" +
+                         $"is_switch: {isSwitch}\n" +
+                         $"tie_breaker: {tieBreaker}\n" + // [NEW]
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
     }
 }
