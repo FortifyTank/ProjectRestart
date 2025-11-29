@@ -253,7 +253,7 @@ public class BattleManager : MonoBehaviour
 
     // [FIX 1] Added 'bool isHostAttacker' to the function signature
     public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker)
-    {   
+    {
         // --- SPECTATOR LOGIC ---
         if (networkManager.isSpectator) 
         {
@@ -265,14 +265,18 @@ public class BattleManager : MonoBehaviour
 
         if (isGameOver) return;
 
-        // If I have a pending move (I am the DEFENDER)
+        // ================================================================
+        // LOGIC PATH A: I AM THE DEFENDER (I got hit)
+        // ================================================================
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
-            // [FIX] The enemy just attacked me. Their commitment is done.
+            // 1. The enemy just finished their attack. Clear their flag.
             if (attackerName == enemyPokemon.name) hasEnemyCommitted = false;
 
+            // 2. Calculate Damage
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
 
+            // 3. Discrepancy Check
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
             {
                 Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
@@ -282,19 +286,20 @@ public class BattleManager : MonoBehaviour
                 return;
             }
 
-            // Apply Damage
+            // 4. Apply Damage
             myPokemon.hp = hpRemaining;
             if (playerHpBar != null) playerHpBar.value = hpRemaining;
-
             if (networkManager != null) networkManager.SendCalculationConfirm();
             pendingMoveName = "";
 
+            // 5. Check Life State
             if (myPokemon.hp <= 0)
             {
-                // [FAINT LOGIC]
+                // --- I FAINTED ---
                 hasICommitted = false; 
                 myPendingMove = ""; 
                 hasEnemyCommitted = false; 
+                
                 BroadcastLog($"{myUsername}'s {myPokemon.name} fainted!");
 
                 bool hasAlive = false;
@@ -302,6 +307,7 @@ public class BattleManager : MonoBehaviour
 
                 if (hasAlive)
                 {
+                    // Force Switch
                     isForcedSwitch = true;
                     OpenParty();
                     if (btnPartyBack) btnPartyBack.gameObject.SetActive(false);
@@ -309,50 +315,53 @@ public class BattleManager : MonoBehaviour
                 }
                 else
                 {
+                    // Game Over
                     if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                     OnGameOver(enemyPokemon.name);
                 }
             }
             else
             {
-                // CASE 2: I SURVIVED
-                // ------------------
-                // Counter-Attack Check: Do I have a move waiting?
-                // [SURVIVED LOGIC]
+                // --- I SURVIVED ---
+                // If I was slower and waiting to counter-attack, do it now.
                 if (hasICommitted && !string.IsNullOrEmpty(myPendingMove))
                 {
                     ExecuteMyMove();
                 }
-
-                // Turn is done for me. Try to unlock.
-                TryEndTurn();
+                else
+                {
+                    // I have no move left. My turn is done. Unlock.
+                    TryEndTurn();
+                }
             }
         }
         // ================================================================
-        // I AM THE ATTACKER (I hit them)
+        // LOGIC PATH B: I AM THE ATTACKER (I hit them)
         // ================================================================
         else
         {
+            // 1. Apply Damage Visuals
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
 
-            // [CRITICAL FIX FOR BUG 3]
-            // Did I kill them?
+            // 2. Check Result
             if (enemyPokemon.hp <= 0)
             {
-                Debug.Log("[OnCalculationReport] Enemy fainted. FORCE LOCKING buttons.");
-                SetButtonsInteractable(false); // HARD LOCK
-            }    
-            else if (string.IsNullOrEmpty(myPendingMove) && !isForcedSwitch)
+                // I killed them. Force Lock until replacement arrives.
+                SetButtonsInteractable(false);
+            }
+            else
             {
-                // If the action that triggered this report was the last thing to happen, unlock.
-                // Since I am the Attacker, receiving this report means the full resolution is done.
+                // [CRITICAL FIX FOR SLOWER PLAYER]
+                // My attack landed successfully and they survived.
+                // My part of the turn is 100% complete.
                 
-                // Note: We'll rely on TryEndTurn to check for fainting, but we need to reset flags first.
-                
+                // I MUST clear my flags, or TryEndTurn will think I'm still busy!
                 hasICommitted = false;
-                hasEnemyCommitted = false;
-                TryEndTurn(); 
+                hasEnemyCommitted = false; 
+                
+                // Unlock Buttons
+                TryEndTurn();
             }
         }
         
@@ -752,12 +761,15 @@ public class BattleManager : MonoBehaviour
                 // We must wait for their attack to hit our new pokemon.
                 if (hasEnemyCommitted)
                 {
-                    Debug.Log("[ExecuteMyMove] Switched, but enemy is waiting to attack. Staying locked.");
-                    // Do NOT clear hasEnemyCommitted. Do NOT call TryEndTurn.
-                    return; 
+                    // FIX: Changed "UNLOCKED" to "LOCKED" to be accurate
+                    Debug.Log("[ExecuteMyMove] Switched. Enemy attack is incoming. STAYING LOCKED.");
+                    // Do NOT unlock. We wait for OnCalculationReport to trigger the unlock.
                 }
-
-                TryEndTurn(); 
+                else
+                {
+                    // Both switched or enemy was idle. Turn is over.
+                    TryEndTurn(); 
+                }
             }
         }
         else
@@ -873,7 +885,8 @@ public class BattleManager : MonoBehaviour
 
     private void TryEndTurn()
     {
-        Debug.Log($"[TryEndTurn] Checking status... MyHP: {myPokemon.hp} | EnemyHP: {enemyPokemon.hp} | Pending: '{myPendingMove}' | EnemyCommitted: {hasEnemyCommitted}");
+        Debug.Log($"[TryEndTurn Check] MyHP: {myPokemon.hp}, EnemyHP: {enemyPokemon.hp}");
+        Debug.Log($"[TryEndTurn Flags] Pending: '{myPendingMove}', I_Committed: {hasICommitted}, Enemy_Committed: {hasEnemyCommitted}");
 
         // 1. Am I dead? (Forced Switch)
         if (myPokemon.hp <= 0) 
@@ -914,5 +927,37 @@ public class BattleManager : MonoBehaviour
         // Safety Reset
         hasICommitted = false;
         hasEnemyCommitted = false;
+    }
+
+    // Inside BattleManager.cs
+
+    public void ForceUnlockAndResetTurn()
+    {
+        // This is the absolute final state reset.
+        hasICommitted = false;
+        hasEnemyCommitted = false;
+        myPendingMove = "";
+        
+        // Clear the UI lock and update the menu
+        SetButtonsInteractable(true);
+        ShowMainMenu();
+
+        Debug.Log("[TURN END] FORCED RESET: All flags cleared and buttons unlocked.");
+    }
+
+    public void OnCalculationConfirm()
+    {
+        // The Protocol says we only do this if the report matched. 
+        // If we are here, the opponent confirmed our damage was correct.
+        
+        // 1. Clear flags because our action (Attacking) is fully done.
+        hasICommitted = false;
+        hasEnemyCommitted = false; 
+
+        // 2. Unlock the UI for the next turn
+        // (In your simultaneous logic, this will unlock you because you were the last one to act)
+        TryEndTurn();
+
+        Debug.Log("RFC Protocol: Turn Cycle Complete. State set to WAITING_FOR_MOVE.");
     }
 }

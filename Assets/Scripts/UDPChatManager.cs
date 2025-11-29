@@ -268,6 +268,15 @@ public class UDPChatManager : MonoBehaviour
                 battleManager.CheckForResolution();
             }
         }
+        // Inside HandleBattleMessage (Add this block)
+        else if (type == "TURN_END")
+        {
+            // The opponent confirms they have finished their action and the turn is over.
+            if (battleManager != null)
+            {
+                battleManager.ForceUnlockAndResetTurn();
+            }
+        }
         else if (type == "ATTACK_ANNOUNCE")
         {
             // WRAP START
@@ -306,6 +315,14 @@ public class UDPChatManager : MonoBehaviour
             {
                 // [FIX] Pass the 'isHost' boolean to the manager
                 battleManager.OnCalculationReport(attackerName, dmg, hp, isHost);
+            }
+        }
+        else if (type == "CALCULATION_CONFIRM") // 
+        {
+            // RFC Section 5.2: "turn order reverses, returning to WAITING_FOR_MOVE"
+            if (battleManager != null) 
+            {
+                battleManager.OnCalculationConfirm();
             }
         }
         else if (type == "RESOLUTION_REQUEST")
@@ -933,4 +950,16 @@ public class UDPChatManager : MonoBehaviour
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
+
+    // Inside UDPChatManager.cs
+
+    // New Sending Function
+    public void SendTurnEndPacket()
+    {
+        string payload = $"message_type: TURN_END\n" +
+                        $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+    }
+
+    
 }
