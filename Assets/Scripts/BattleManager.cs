@@ -29,6 +29,14 @@ public class BattleManager : MonoBehaviour
     public Button btnXDefense;
     public Button btnXSpAtk;
     public Button btnXSpDef;
+    public Button btnXSpeed; // Drag your new button here in Unity Inspector!
+
+    [Header("Bag Inventory")]
+    public int itemUsesAtk = 5;
+    public int itemUsesDef = 5;
+    public int itemUsesSpAtk = 5;
+    public int itemUsesSpDef = 5;
+    public int itemUsesSpeed = 5;
 
     [Header("Player UI")]
     public Image playerImage; 
@@ -193,19 +201,18 @@ public class BattleManager : MonoBehaviour
 
     public void OnMoveSelected(int moveIndex)
     {   
-
         if (isGameOver) return;
-        
         string moveName = myPokemon.moves[moveIndex];
         
-        // OLD CODE: Immediate Attack (DELETE or COMMENT OUT)
-        // networkManager.SendAttackAnnounce(moveName); 
+        // [NEW] Calculate Effective Speed based on Stages
+        float mult = GetStatMultiplier(myPokemon.stageSpeed);
+        int effectiveSpeed = Mathf.FloorToInt(myPokemon.speed * mult);
         
-        // NEW CODE: Commit!
-        // Speed logic: Switches are super fast (9999), regular moves use Pokemon Speed
-        CommitAction(moveName, myPokemon.speed, false);
+        Debug.Log($"Base Speed: {myPokemon.speed} | Stage: {myPokemon.stageSpeed} | Effective: {effectiveSpeed}");
+
+        // Send the BOOSTED speed to the network!
+        CommitAction(moveName, effectiveSpeed, false);
         
-        // Close the move panel
         ShowMainMenu();
     }
     
@@ -401,6 +408,9 @@ public class BattleManager : MonoBehaviour
     // --- RFC 6: DAMAGE CALCULATION ---
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
     {
+        // 0. Handle "Dummy" moves (like Splash or Used Item)
+        if (moveName == "used-item" || moveName == "Used Item") return 0;
+
         if (!MoveDatabase.Moves.ContainsKey(moveName)) 
         {
             Debug.LogError($"Move {moveName} not found in database!");
@@ -408,12 +418,25 @@ public class BattleManager : MonoBehaviour
         }
         MoveData move = MoveDatabase.Moves[moveName];
 
-        // 1. Determine Stats (Physical vs Special)
+        // 1. Determine Stats & Apply Stage Multipliers (CRITICAL STEP)
         bool isPhysical = move.category == "Physical";
-        float atkStat = isPhysical ? attacker.attack : attacker.spAttack;
-        float defStat = isPhysical ? defender.defense : defender.spDefense;
+        float atkStat, defStat;
 
-        // 2. Type Effectiveness (RFC Compliant via CSV)
+        if (isPhysical)
+        {
+            // Physical: Use Attack vs Defense
+            // "GetStatMultiplier" converts the stage (e.g., +2) into a float (e.g., 2.0x)
+            atkStat = attacker.attack * GetStatMultiplier(attacker.stageAtk);
+            defStat = defender.defense * GetStatMultiplier(defender.stageDef);
+        }
+        else
+        {
+            // Special: Use SpAttack vs SpDefense
+            atkStat = attacker.spAttack * GetStatMultiplier(attacker.stageSpAtk);
+            defStat = defender.spDefense * GetStatMultiplier(defender.stageSpDef);
+        }
+
+        // 2. Type Effectiveness
         float totalTypeMult = 1.0f;
         string moveTypeLower = move.type.ToLower();
 
@@ -421,24 +444,18 @@ public class BattleManager : MonoBehaviour
         {
             totalTypeMult = defender.typeMultipliers[moveTypeLower];
         }
-        else
-        {
-            Debug.LogWarning($"No type data found for {moveTypeLower} vs {defender.name}. Defaulting to 1.0");
-        }
 
-        // 3. Formula
-        // RFC: Damage = (BasePower * AttackerStat * TypeEffectiveness) / DefenderStat
+        // 3. The Formula
+        // Damage = (Power * Atk * Type) / Def
         float numerator = move.power * atkStat * totalTypeMult;
         float rawDamage = numerator / defStat;
         
         int finalDamage = Mathf.FloorToInt(rawDamage);
-        if (finalDamage < 1) finalDamage = 1; 
+        if (finalDamage < 1 && move.power > 0) finalDamage = 1; 
 
-        // --- NEW DETAILED LOG ---
-        Debug.Log($"<color=cyan><b>[CALCULATION REPORT]</b></color> {attacker.name} used {moveName} on {defender.name}\n" +
-                  $"<b>Stats:</b> Atk: {atkStat} | Def: {defStat}\n" +
-                  $"<b>Math:</b> ({move.power} * {atkStat} * {totalTypeMult}) / {defStat}\n" +
-                  $"<b>Result:</b> {numerator} / {defStat} = <b>{finalDamage} DMG</b>");
+        Debug.Log($"<color=cyan><b>[CALC]</b></color> {attacker.name} used {moveName}. " +
+                $"AtkStage: {attacker.stageAtk} (x{GetStatMultiplier(attacker.stageAtk)}), " +
+                $"DefStage: {defender.stageDef} (x{GetStatMultiplier(defender.stageDef)}) -> DMG: {finalDamage}");
 
         return finalDamage;
     }
@@ -531,23 +548,29 @@ public class BattleManager : MonoBehaviour
     }
 
     // 1. Add this function inside BattleManager
-    public void ForceUpdateSpectatorView(string myMonName, int myHp, int myMax, string enemyMonName, int enemyHp, int enemyMax)
+    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
     {
-        // FORCE UPDATE PLAYER SIDE (Host)
-        if (playerNameText != null) playerNameText.text = myMonName;
-        if (playerHpBar != null) 
+        // 1. Host Side (Player 1)
+        // If the name is different (or null), load the Pokemon data from DB
+        if (myPokemon == null || myPokemon.name != hName)
         {
-            playerHpBar.maxValue = myMax;
-            playerHpBar.value = myHp;
+            myPokemon = PokemonDatabase.GetPokemon(hName); 
         }
+        // CRITICAL FIX: Overwrite the DB values with the Live values from the packet
+        myPokemon.hp = hHp;
+        myPokemon.maxHp = hMax;
 
-        // FORCE UPDATE ENEMY SIDE (Joiner)
-        if (enemyNameText != null) enemyNameText.text = enemyMonName;
-        if (enemyHpBar != null) 
+        // 2. Client Side (Player 2)
+        if (enemyPokemon == null || enemyPokemon.name != cName)
         {
-            enemyHpBar.maxValue = enemyMax;
-            enemyHpBar.value = enemyHp;
+            enemyPokemon = PokemonDatabase.GetPokemon(cName);
         }
+        // CRITICAL FIX: Overwrite the DB values with the Live values
+        enemyPokemon.hp = cHp;
+        enemyPokemon.maxHp = cMax;
+
+        // 3. Now update the Visuals (Sliders/Texts) using this corrected data
+        UpdateBattleUI();
     }
 
     // 2. Add this helper to send the data (Only Host runs this)
@@ -565,27 +588,31 @@ public class BattleManager : MonoBehaviour
     public void PerformSwitch(int newIndex)
     {
         if (newIndex < 0 || newIndex >= myParty.Count) return;
-        if (myParty[newIndex].hp <= 0) return; // Cannot switch to fainted mon
+        if (myParty[newIndex].hp <= 0) return; 
 
-        // 1. Update Data
+        // 1. Capture Old Name for the message
+        string oldMonName = myPokemon.name;
+
+        myPokemon.ResetStages();
+
+        // 2. Update Data
         myActiveIndex = newIndex;
-        myPokemon = myParty[newIndex]; // Point the shortcut to the new mon
+        myPokemon = myParty[newIndex]; 
 
-        // 2. Update UI
+        // 3. Update UI
         UpdateBattleUI();
         
-        string log = $"{myUsername} sent out {myPokemon.name}!";
-        BroadcastLog(log);
+        // 4. Send Messages (The "Original Game" Style)
+        BroadcastLog($"{myUsername} withdrew {oldMonName}!");
+        BroadcastLog($"{myUsername} sent out {myPokemon.name}!");
 
-        // 3. Network: Tell Opponent & Spectators
-        // We need to add a "SWITCH_ANNOUNCE" packet type.
+        // 5. Network: Tell Opponent & Spectators
         if (networkManager != null)
         {
-            // Reuse BATTLE_SETUP for now, or create a new one. 
-            // Using BATTLE_SETUP is the easiest "lazy fix" because it already updates the enemy view!
+            // Tell opponent we switched
             networkManager.SendBattleSetup(myPokemon.name);
             
-            // Also update spectators immediately
+            // Update spectators so they see the new mon and current HP
             SendSpectatorUpdate();
         }
     }
@@ -613,13 +640,14 @@ public class BattleManager : MonoBehaviour
 
         if(btnPartyBack) btnPartyBack.onClick.AddListener(() => ShowMainMenu());
         
-        if(btnBagBack) btnBagBack.onClick.AddListener(() => ShowMainMenu());
 
         // [NEW] Hook up Item Buttons (We will write UseItem later)
+        if(btnBagBack) btnBagBack.onClick.AddListener(() => ShowMainMenu());
         if(btnXAttack)  btnXAttack.onClick.AddListener(() => UseItem("Attack"));
         if(btnXDefense) btnXDefense.onClick.AddListener(() => UseItem("Defense"));
         if(btnXSpAtk)   btnXSpAtk.onClick.AddListener(() => UseItem("SpAttack"));
         if(btnXSpDef)   btnXSpDef.onClick.AddListener(() => UseItem("SpDefense"));
+        if(btnXSpeed) btnXSpeed.onClick.AddListener(() => UseItem("Speed"));
 
         ShowMainMenu();
     }
@@ -874,13 +902,42 @@ public class BattleManager : MonoBehaviour
 
     public void UseItem(string statName)
     {
-        Debug.Log($"Used X-{statName}! (Logic coming soon)");
-        // Logic will be: 
-        // 1. Consume turn
-        // 2. Add +2 to stat stage
-        // 3. Send packet
+        bool canUse = false;
         
-        ShowMainMenu(); // Close bag after use
+        // 1. Check Inventory
+        if (statName == "Attack" && itemUsesAtk > 0) canUse = true;
+        else if (statName == "Defense" && itemUsesDef > 0) canUse = true;
+        else if (statName == "SpAttack" && itemUsesSpAtk > 0) canUse = true;
+        else if (statName == "SpDefense" && itemUsesSpDef > 0) canUse = true;
+        else if (statName == "Speed" && itemUsesSpeed > 0) canUse = true;
+
+        if (!canUse)
+        {
+            networkManager.AddChatMessage("System", "You are out of that item!");
+            return;
+        }
+
+        // 2. Apply Boost
+        // We clamp it between -6 and 6 because that's the Pokemon rule
+        if (statName == "Attack") { myPokemon.stageAtk = Mathf.Clamp(myPokemon.stageAtk + 2, -6, 6); itemUsesAtk--; }
+        else if (statName == "Defense") { myPokemon.stageDef = Mathf.Clamp(myPokemon.stageDef + 2, -6, 6); itemUsesDef--; }
+        else if (statName == "SpAttack") { myPokemon.stageSpAtk = Mathf.Clamp(myPokemon.stageSpAtk + 2, -6, 6); itemUsesSpAtk--; }
+        else if (statName == "SpDefense") { myPokemon.stageSpDef = Mathf.Clamp(myPokemon.stageSpDef + 2, -6, 6); itemUsesSpDef--; }
+        else if (statName == "Speed") { myPokemon.stageSpeed = Mathf.Clamp(myPokemon.stageSpeed + 2, -6, 6); itemUsesSpeed--; }
+
+        // 3. Log & Commit
+        string logMsg = $"{myUsername} used X-{statName}!";
+        BroadcastLog(logMsg);
+        
+        // Use "Used Item" to pass the turn
+        CommitAction("used-item", 9999, false); 
+        ShowMainMenu();
+    }
+
+    public float GetStatMultiplier(int stage)
+    {
+        if (stage >= 0) return (2.0f + stage) / 2.0f;
+        else return 2.0f / (2.0f + Mathf.Abs(stage));
     }
 
     private void TryEndTurn()
@@ -960,4 +1017,70 @@ public class BattleManager : MonoBehaviour
 
         Debug.Log("RFC Protocol: Turn Cycle Complete. State set to WAITING_FOR_MOVE.");
     }
+
+    // Define Stat IDs for clarity (matches the CSV standard)
+public enum StatID
+{
+    HP = 1,
+    Attack = 2,
+    Defense = 3,
+    SpAttack = 4,
+    SpDefense = 5,
+    Speed = 6,
+    Accuracy = 7,
+    Evasion = 8
+}
+
+public void ApplyStatusEffect(string moveName, Pokemon user, Pokemon target)
+{
+    if (!MoveDatabase.Moves.ContainsKey(moveName)) return;
+    MoveData move = MoveDatabase.Moves[moveName];
+
+    // AUTOMATION: Loop through the CSV data!
+    foreach (var change in move.statChanges)
+    {
+        // Default target is the enemy
+        Pokemon affectedMon = target;
+
+        // Check target_id from moves.csv if you have it.
+        // ID 7 = User. ID 13 = User-or-Ally.
+        // For now, simple logic: If it's a "Status" move and raises stats (positive), 
+        // it's probably for the user (like Swords Dance).
+        // If it's negative, it's for the enemy (like Growl).
+        if (change.changeAmount > 0) affectedMon = user;
+        else affectedMon = target;
+
+        ApplyStatChange(affectedMon, (StatID)change.statId, change.changeAmount);
+    }
+}
+
+private void ApplyStatChange(Pokemon p, StatID stat, int amount)
+{
+    string statName = "";
+    string riseFall = amount > 0 ? "rose" : "fell";
+
+    switch (stat)
+    {
+        case StatID.Attack: 
+            p.stageAtk = Mathf.Clamp(p.stageAtk + amount, -6, 6); 
+            statName = "Attack"; break;
+        case StatID.Defense: 
+            p.stageDef = Mathf.Clamp(p.stageDef + amount, -6, 6); 
+            statName = "Defense"; break;
+        case StatID.SpAttack: 
+            p.stageSpAtk = Mathf.Clamp(p.stageSpAtk + amount, -6, 6); 
+            statName = "Sp. Atk"; break;
+        case StatID.SpDefense: 
+            p.stageSpDef = Mathf.Clamp(p.stageSpDef + amount, -6, 6); 
+            statName = "Sp. Def"; break;
+        case StatID.Speed: 
+            p.stageSpeed = Mathf.Clamp(p.stageSpeed + amount, -6, 6); 
+            statName = "Speed"; break;
+    }
+
+    if (statName != "")
+    {
+        BroadcastLog($"{p.name}'s {statName} {riseFall}!");
+    }
+}
 }

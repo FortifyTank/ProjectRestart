@@ -147,4 +147,38 @@ public class MoveLoader : MonoBehaviour
         if (int.TryParse(val, out int result)) return result;
         return 0;
     }
+
+    public static void LoadStatChanges(string csvContent)
+    {
+        // Skip header row
+        string[] lines = csvContent.Split('\n');
+        
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+
+            string[] parts = line.Split(',');
+
+            // File Format: move_id, stat_id, change
+            if (parts.Length >= 3)
+            {
+                int moveId = int.Parse(parts[0]);
+                int statId = int.Parse(parts[1]);
+                int change = int.Parse(parts[2]);
+
+                // Find the move and add the data
+                if (MoveDatabase.MovesById.ContainsKey(moveId))
+                {
+                    MoveData move = MoveDatabase.MovesById[moveId];
+                    move.statChanges.Add(new StatChangeEntry 
+                    { 
+                        statId = statId, 
+                        changeAmount = change 
+                    });
+                }
+            }
+        }
+        Debug.Log("Stat Changes Loaded!");
+    }
 }

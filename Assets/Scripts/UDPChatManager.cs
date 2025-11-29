@@ -652,17 +652,9 @@ public class UDPChatManager : MonoBehaviour
 
                         if (battleManager != null)
                         {   
+                            // This SYNC function now handles loading the sprites AND setting the correct HP.
+                            // We do NOT need to send BATTLE_SETUP anymore.
                             battleManager.SendSpectatorUpdate();
-
-                            string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
-                            AddToPending(GetNextSeq(), p1, remoteEP); // Reliable Setup
-
-                            string enemyName = battleManager.GetEnemyPokemonName();
-                            if (enemyName != "Unknown")
-                            {
-                                string p2 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {enemyName}\nsequence_number: {GetNextSeq()}";
-                                AddToPending(GetNextSeq(), p2, remoteEP); // Reliable Setup
-                            }
                         }
                     }
                     continue;

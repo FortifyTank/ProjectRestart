@@ -34,23 +34,42 @@ public class Pokemon
         this.speed = spd;
         this.moves = new List<string>();
     }
+
+    public int stageAtk = 0;
+    public int stageDef = 0;
+    public int stageSpAtk = 0;
+    public int stageSpDef = 0;
+    public int stageSpeed = 0;
+
+    public void ResetStages()
+    {
+        stageAtk = 0;
+        stageDef = 0;
+        stageSpAtk = 0;
+        stageSpDef = 0;
+        stageSpeed = 0;
+    }
 }
 
+public class StatChangeEntry
+{
+    public int statId;
+    public int changeAmount;
+}
+
+// 2. Add the list to your MoveData
 public class MoveData
 {
+    public string name;
+    public int id; // Make sure you have the ID stored!
     public string type;
-    public string category; 
     public int power;
-    public int id; // [NEW] Added ID field
-
-    // [FIX] Constructor now accepts 4 arguments
-    public MoveData(string t, string c, int p, int i)
-    {
-        type = t;
-        category = c;
-        power = p;
-        id = i;
-    }
+    public int accuracy;
+    public int pp;
+    public int damageClassId; // 1 = Status, 2 = Physical, 3 = Special
+    
+    // [NEW] The list of changes this move causes
+    public List<StatChangeEntry> statChanges = new List<StatChangeEntry>(); 
 }
 
 public class MoveDatabase
