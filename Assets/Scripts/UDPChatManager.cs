@@ -242,6 +242,7 @@ public class UDPChatManager : MonoBehaviour
                         battleManager.SetOpponentPokemon(pokeName);
                     }
                 }
+                battleManager.OnEnemySwitch(pokeName);
             }
         }
         else if (type == "COMMIT_TURN")
@@ -266,6 +267,15 @@ public class UDPChatManager : MonoBehaviour
                 
                 // 3. Try to Resolve
                 battleManager.CheckForResolution();
+            }
+        }
+        // Inside HandleBattleMessage (Add this block)
+        else if (type == "TURN_END")
+        {
+            // The opponent confirms they have finished their action and the turn is over.
+            if (battleManager != null)
+            {
+                battleManager.ForceUnlockAndResetTurn();
             }
         }
         else if (type == "ATTACK_ANNOUNCE")
@@ -302,22 +312,36 @@ public class UDPChatManager : MonoBehaviour
             bool isHost = false;
             if (!string.IsNullOrEmpty(isHostStr)) bool.TryParse(isHostStr, out isHost);
 
+            string atkStr = ParseValue(rawData, "atk_stage");
+            string defStr = ParseValue(rawData, "def_stage");
+            int rAtk = string.IsNullOrEmpty(atkStr) ? 0 : int.Parse(atkStr);
+            int rDef = string.IsNullOrEmpty(defStr) ? 0 : int.Parse(defStr);
+
             if (battleManager != null) 
             {
-                // [FIX] Pass the 'isHost' boolean to the manager
-                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost);
+                // Pass the new ints to the function
+                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost, rAtk, rDef);
+            }
+        }
+        else if (type == "CALCULATION_CONFIRM") // 
+        {
+            // RFC Section 5.2: "turn order reverses, returning to WAITING_FOR_MOVE"
+            if (battleManager != null) 
+            {
+                battleManager.OnCalculationConfirm();
             }
         }
         else if (type == "RESOLUTION_REQUEST")
         {
-            // WRAP START
-            if (!isSpectator)
+            // Parse the values from the packet
+            int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
+            int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
+            
+            // Pass to BattleManager
+            if (battleManager != null) 
             {
-                int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
-                int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-                if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
+                battleManager.OnResolutionRequest(dmg, hp);
             }
-            // WRAP END
         }
         else if (type == "GAME_OVER")
         {
@@ -389,18 +413,20 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost)
-{
+    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost, int relevantAtkStage, int relevantDefStage)
+    {
         string payload = $"message_type: CALCULATION_REPORT\n" +
-                         $"attacker: {attacker}\n" +
-                         $"move_name: {move}\n" +
-                         $"damage_dealt: {dmg}\n" +
-                         $"defender_hp_remaining: {defHp}\n" +
-                         $"attacker_hp_remaining: {attHp}\n" +
-                         $"is_host: {isHost}\n" + // [NEW]
-                         $"sequence_number: {GetNextSeq()}";
+                        $"attacker: {attacker}\n" +
+                        $"move_name: {move}\n" +
+                        $"damage_dealt: {dmg}\n" +
+                        $"defender_hp_remaining: {defHp}\n" +
+                        $"attacker_hp_remaining: {attHp}\n" +
+                        $"is_host: {isHost}\n" + 
+                        // These are the stages actually used in the math
+                        $"atk_stage: {relevantAtkStage}\n" + 
+                        $"def_stage: {relevantDefStage}\n" + 
+                        $"sequence_number: {GetNextSeq()}";
 
-        // ... existing send logic ...
         SendReliablePacket(payload);
     }
 
@@ -635,17 +661,9 @@ public class UDPChatManager : MonoBehaviour
 
                         if (battleManager != null)
                         {   
+                            // This SYNC function now handles loading the sprites AND setting the correct HP.
+                            // We do NOT need to send BATTLE_SETUP anymore.
                             battleManager.SendSpectatorUpdate();
-
-                            string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
-                            AddToPending(GetNextSeq(), p1, remoteEP); // Reliable Setup
-
-                            string enemyName = battleManager.GetEnemyPokemonName();
-                            if (enemyName != "Unknown")
-                            {
-                                string p2 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {enemyName}\nsequence_number: {GetNextSeq()}";
-                                AddToPending(GetNextSeq(), p2, remoteEP); // Reliable Setup
-                            }
                         }
                     }
                     continue;
@@ -933,4 +951,16 @@ public class UDPChatManager : MonoBehaviour
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
+
+    // Inside UDPChatManager.cs
+
+    // New Sending Function
+    public void SendTurnEndPacket()
+    {
+        string payload = $"message_type: TURN_END\n" +
+                        $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+    }
+
+    
 }

@@ -154,18 +154,35 @@ public class PokemonDatabase : MonoBehaviour
                 // ---------------------------------------------------
 
                 // Auto-assign moves based on Type
-                if (MoveLoader.Learnsets.ContainsKey(p.pokedexId)) // Wait, we need to make sure we parsed Pokedex ID!
+                if (MoveLoader.Learnsets.ContainsKey(p.pokedexId) && MoveLoader.Learnsets[p.pokedexId].Count > 0)
                 {
-                    p.moves = MoveLoader.Learnsets[p.pokedexId];
-                    
-                    // Limit to 4 moves so the UI doesn't explode
-                    if (p.moves.Count > 4) 
-                        p.moves = p.moves.GetRange(0, 4);
+                    List<string> validMoves = MoveLoader.Learnsets[p.pokedexId];
+
+                    // [NEW] RANDOMIZATION LOGIC
+                    if (validMoves.Count > 4)
+                    {
+                        // Shuffle the list locally so we don't mess up the master list
+                        List<string> pool = new List<string>(validMoves);
+                        p.moves = new List<string>();
+
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int randIndex = UnityEngine.Random.Range(0, pool.Count);
+                            p.moves.Add(pool[randIndex]);
+                            pool.RemoveAt(randIndex); // Remove so we don't pick it twice
+                        }
+                    }
+                    else
+                    {
+                        // If they have 4 or less moves, just give them all
+                        p.moves = new List<string>(validMoves);
+                    }
                 }
                 else
                 {
-                    // Fallback if CSV fails
-                    p.moves = new List<string> { "Tackle" }; 
+                    // Fallback if no moves found
+                    p.moves = new List<string> { "tackle" }; 
+                    // Debug.LogWarning($"No moves found for {p.name} (ID: {p.pokedexId})! Defaulting to Tackle.");
                 }
 
                 if (!AllPokemon.ContainsKey(name))

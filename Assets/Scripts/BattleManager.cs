@@ -29,6 +29,14 @@ public class BattleManager : MonoBehaviour
     public Button btnXDefense;
     public Button btnXSpAtk;
     public Button btnXSpDef;
+    public Button btnXSpeed; // Drag your new button here in Unity Inspector!
+
+    [Header("Bag Inventory")]
+    public int itemUsesAtk = 5;
+    public int itemUsesDef = 5;
+    public int itemUsesSpAtk = 5;
+    public int itemUsesSpDef = 5;
+    public int itemUsesSpeed = 5;
 
     [Header("Player UI")]
     public Image playerImage; 
@@ -235,19 +243,18 @@ public class BattleManager : MonoBehaviour
 
     public void OnMoveSelected(int moveIndex)
     {   
-
         if (isGameOver) return;
-        
         string moveName = myPokemon.moves[moveIndex];
         
-        // OLD CODE: Immediate Attack (DELETE or COMMENT OUT)
-        // networkManager.SendAttackAnnounce(moveName); 
+        // [NEW] Calculate Effective Speed based on Stages
+        float mult = GetStatMultiplier(myPokemon.stageSpeed);
+        int effectiveSpeed = Mathf.FloorToInt(myPokemon.speed * mult);
         
-        // NEW CODE: Commit!
-        // Speed logic: Switches are super fast (9999), regular moves use Pokemon Speed
-        CommitAction(moveName, myPokemon.speed, false);
+        Debug.Log($"Base Speed: {myPokemon.speed} | Stage: {myPokemon.stageSpeed} | Effective: {effectiveSpeed}");
+
+        // Send the BOOSTED speed to the network!
+        CommitAction(moveName, effectiveSpeed, false);
         
-        // Close the move panel
         ShowMainMenu();
     }
     
@@ -268,17 +275,37 @@ public class BattleManager : MonoBehaviour
     {
         if (string.IsNullOrEmpty(lastMoveUsedByMe)) return;
         
-        // Calculate damage
+        // 1. Calculate damage
+        // (Note: PerformAttack applies the damage locally to the enemyPokemon object)
         int damage = PerformAttack(lastMoveUsedByMe, myPokemon, enemyPokemon, enemyHpBar);
         
-        // Send Report (Updated with myPokemon.hp as the 5th argument)
+        // 2. Determine which stats to sync (NEW LOGIC)
+        int sentAtkStage = 0;
+        int sentDefStage = 0;
+
+        if (MoveLoader.Moves.ContainsKey(lastMoveUsedByMe.ToLower()))
+        {
+            MoveData move = MoveLoader.Moves[lastMoveUsedByMe.ToLower()];
+
+            if (move.category == "Physical")
+            {
+                sentAtkStage = myPokemon.stageAtk;      // My (Attacker) Physical Atk
+                sentDefStage = enemyPokemon.stageDef;   // Enemy (Defender) Physical Def
+            }
+            else if (move.category == "Special")
+            {
+                sentAtkStage = myPokemon.stageSpAtk;    // My (Attacker) Sp. Atk
+                sentDefStage = enemyPokemon.stageSpDef; // Enemy (Defender) Sp. Def
+            }
+        }
+
+        // 3. Send Report (Updated to include the 2 new stat arguments)
         if (networkManager != null)
         {
-            // I am the one calculating damage.
-            // If I am Host, then the Attacker was the Joiner (isHost = false).
-            // If I am Joiner, then the Attacker was the Host (isHost = true).
-            
-            bool wasHostAttacker = !networkManager.isHosting; // Invert my role
+            // Calculate "Was Host Attacker?" logic
+            // If I am hosting, and I am attacking, then Host is Attacker (true).
+            // If I am joining, and I am attacking, then Host is NOT Attacker (false).
+            bool wasHostAttacker = networkManager.isHosting; 
 
             networkManager.SendCalculationReport(
                 myPokemon.name,      
@@ -286,16 +313,19 @@ public class BattleManager : MonoBehaviour
                 damage,              
                 enemyPokemon.hp,     
                 myPokemon.hp,
-                wasHostAttacker // [NEW]
+                wasHostAttacker,
+                sentAtkStage, // Argument 7: Attack Stage (New!)
+                sentDefStage  // Argument 8: Defense Stage (New!)
             );
-            // [FIX] Tell Spectators that I just dealt damage!
+            
             SendSpectatorUpdate();
         }
     }
 
     // [FIX 1] Added 'bool isHostAttacker' to the function signature
-    public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker)
-    {   
+    // THIS FIXES ERROR CS0103 (remoteAtkStage now exists!)
+    public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker, int remoteAtkStage, int remoteDefStage)
+    {
         // --- SPECTATOR LOGIC ---
         if (networkManager.isSpectator) 
         {
@@ -305,38 +335,149 @@ public class BattleManager : MonoBehaviour
         }
         // -----------------------
 
-        if (isGameOver) return;
+        // -----------------------
 
-        // If I have a pending move (I am the DEFENDER)
+        // [INSERT STEP 3 HERE: SYNC STATS]
+        // ---------------------------------------------------------
+        // We received the "True" stages used by the reporter. 
+        // Force our local Pokemon to match them so we don't desync next turn.
+
+        bool isMe = (networkManager.isHosting == isHostAttacker);
+
+        Pokemon attackerMon = isMe ? myPokemon : enemyPokemon;
+        Pokemon defenderMon = isMe ? enemyPokemon : myPokemon;
+        
+        // We need to know if the move was Physical or Special to know WHICH stat to sync.
+        // We can look up the pending move (if we are defender) or just infer it.
+        // For safety, let's sync strictly based on what was sent.
+        
+        // NOTE: This assumes remoteAtkStage corresponds to the stat used (Atk or SpAtk)
+        // We need the move category to know where to put it. 
+        // Since we don't have the move name in the arguments, we can rely on 'pendingMoveName' 
+        // if we are the defender, OR we just trust that 'remoteAtkStage' is the Attack stage for now.
+        
+        // Ideally, pass 'moveName' into this function too. 
+        // But for now, here is the robust "Defender" sync (since Discrepancy only happens when acting as Defender):
+        
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
-            // [FIX] The enemy just attacked me. Their commitment is done.
+            MoveData move = MoveLoader.Moves[pendingMoveName.ToLower()];
+            if (move.category == "Physical")
+            {
+                // Sync Physical Stats
+                if (attackerMon.stageAtk != remoteAtkStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {attackerMon.name} Atk from {attackerMon.stageAtk} to {remoteAtkStage}");
+                    attackerMon.stageAtk = remoteAtkStage;
+                }
+                if (defenderMon.stageDef != remoteDefStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {defenderMon.name} Def from {defenderMon.stageDef} to {remoteDefStage}");
+                    defenderMon.stageDef = remoteDefStage;
+                }
+            }
+            else if (move.category == "Special")
+            {
+                // Sync Special Stats
+                if (attackerMon.stageSpAtk != remoteAtkStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {attackerMon.name} SpAtk from {attackerMon.stageSpAtk} to {remoteAtkStage}");
+                    attackerMon.stageSpAtk = remoteAtkStage;
+                }
+                if (defenderMon.stageSpDef != remoteDefStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {defenderMon.name} SpDef from {defenderMon.stageSpDef} to {remoteDefStage}");
+                    defenderMon.stageSpDef = remoteDefStage;
+                }
+            }
+        }
+        // ---------------------------------------------------------
+
+        if (isGameOver) return;
+
+        // ================================================================
+        // LOGIC PATH A: I AM THE DEFENDER (I got hit)
+        // ================================================================
+        if (!string.IsNullOrEmpty(pendingMoveName))
+        {
+            // 1. The enemy just finished their attack. Clear their flag.
             if (attackerName == enemyPokemon.name) hasEnemyCommitted = false;
 
+            // 2. Calculate Damage
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
 
-            if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
+            // Inside Logic Path A (Defender Logic)...
+            // ... after calculating damage ...
+
+            // 1. Determine which stats were relevant for this move
+            int sentAtkStage = 0;
+            int sentDefStage = 0;
+
+            if (!string.IsNullOrEmpty(pendingMoveName) && MoveLoader.Moves.ContainsKey(pendingMoveName.ToLower()))
             {
-                Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
-                int myCorrectHp = myPokemon.hp - myCalculatedDamage;
-                if (networkManager != null)
-                    networkManager.SendResolutionRequest(enemyPokemon.name, pendingMoveName, myCalculatedDamage, myCorrectHp);
-                return;
+                MoveData move = MoveLoader.Moves[pendingMoveName.ToLower()];
+
+                if (move.category == "Physical")
+                {
+                    sentAtkStage = enemyPokemon.stageAtk;  // Enemy (Attacker) Physical Atk
+                    sentDefStage = myPokemon.stageDef;     // Me (Defender) Physical Def
+                }
+                else if (move.category == "Special")
+                {
+                    sentAtkStage = enemyPokemon.stageSpAtk; // Enemy (Attacker) Sp. Atk
+                    sentDefStage = myPokemon.stageSpDef;    // Me (Defender) Sp. Def
+                }
             }
 
-            // Apply Damage
+            // 2. Send the report with these specific stages
+            if (networkManager != null) 
+            {
+                // FIXES BOTH ERRORS:
+                // 1. Added 'sentAtkStage' and 'sentDefStage' (Fixes CS7036)
+                // 2. Changed 'isHosting' to 'networkManager.isHosting' (Fixes CS0103)
+                
+                networkManager.SendCalculationReport(
+                    enemyPokemon.name, 
+                    pendingMoveName, 
+                    myCalculatedDamage, 
+                    myPokemon.hp, 
+                    enemyPokemon.hp, 
+                    networkManager.isHosting, // <--- FIXED HERE
+                    sentAtkStage,             // <--- FIXED HERE
+                    sentDefStage              // <--- FIXED HERE
+                );
+            }
+            
+            // 3. Discrepancy Check
+            if (Mathf.Abs(myCalculatedDamage - damageDealt) > 0)
+            {
+                Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}. Sending RESOLUTION_REQUEST.");
+                
+                // RFC COMPLIANCE: Send my values to them
+                // We do NOT apply damage yet. We wait for them to agree.
+                int myCorrectHp = myPokemon.hp - myCalculatedDamage;
+                
+                if (networkManager != null)
+                {
+                    networkManager.SendResolutionRequest(enemyPokemon.name, pendingMoveName, myCalculatedDamage, myCorrectHp);
+                }
+                return; // STOP HERE! Do not unlock buttons yet.
+            }
+
+            // 4. Apply Damage
             myPokemon.hp = hpRemaining;
             if (playerHpBar != null) playerHpBar.value = hpRemaining;
-
             if (networkManager != null) networkManager.SendCalculationConfirm();
             pendingMoveName = "";
 
+            // 5. Check Life State
             if (myPokemon.hp <= 0)
             {
-                // [FAINT LOGIC]
+                // --- I FAINTED ---
                 hasICommitted = false; 
                 myPendingMove = ""; 
                 hasEnemyCommitted = false; 
+                
                 BroadcastLog($"{myUsername}'s {myPokemon.name} fainted!");
 
                 bool hasAlive = false;
@@ -344,6 +485,7 @@ public class BattleManager : MonoBehaviour
 
                 if (hasAlive)
                 {
+                    // Force Switch
                     isForcedSwitch = true;
                     OpenParty();
                     if (btnPartyBack) btnPartyBack.gameObject.SetActive(false);
@@ -351,50 +493,53 @@ public class BattleManager : MonoBehaviour
                 }
                 else
                 {
+                    // Game Over
                     if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                     OnGameOver(enemyPokemon.name);
                 }
             }
             else
             {
-                // CASE 2: I SURVIVED
-                // ------------------
-                // Counter-Attack Check: Do I have a move waiting?
-                // [SURVIVED LOGIC]
+                // --- I SURVIVED ---
+                // If I was slower and waiting to counter-attack, do it now.
                 if (hasICommitted && !string.IsNullOrEmpty(myPendingMove))
                 {
                     ExecuteMyMove();
                 }
-
-                // Turn is done for me. Try to unlock.
-                TryEndTurn();
+                else
+                {
+                    // I have no move left. My turn is done. Unlock.
+                    TryEndTurn();
+                }
             }
         }
         // ================================================================
-        // I AM THE ATTACKER (I hit them)
+        // LOGIC PATH B: I AM THE ATTACKER (I hit them)
         // ================================================================
         else
         {
+            // 1. Apply Damage Visuals
             enemyPokemon.hp = hpRemaining;
             if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
 
-            // [CRITICAL FIX FOR BUG 3]
-            // Did I kill them?
+            // 2. Check Result
             if (enemyPokemon.hp <= 0)
             {
-                Debug.Log("[OnCalculationReport] Enemy fainted. FORCE LOCKING buttons.");
-                SetButtonsInteractable(false); // HARD LOCK
-            }    
-            else if (string.IsNullOrEmpty(myPendingMove) && !isForcedSwitch)
+                // I killed them. Force Lock until replacement arrives.
+                SetButtonsInteractable(false);
+            }
+            else
             {
-                // If the action that triggered this report was the last thing to happen, unlock.
-                // Since I am the Attacker, receiving this report means the full resolution is done.
+                // [CRITICAL FIX FOR SLOWER PLAYER]
+                // My attack landed successfully and they survived.
+                // My part of the turn is 100% complete.
                 
-                // Note: We'll rely on TryEndTurn to check for fainting, but we need to reset flags first.
-                
+                // I MUST clear my flags, or TryEndTurn will think I'm still busy!
                 hasICommitted = false;
-                hasEnemyCommitted = false;
-                TryEndTurn(); 
+                hasEnemyCommitted = false; 
+                
+                // Unlock Buttons
+                TryEndTurn();
             }
         }
         
@@ -403,9 +548,20 @@ public class BattleManager : MonoBehaviour
 
     public void OnResolutionRequest(int correctDamage, int correctHp)
     {
+        Debug.Log($"[RESOLUTION] Opponent corrected my math. Updating Damage: {correctDamage}, Enemy HP: {correctHp}");
+
+        // 1. Update MY view of the enemy to match what THEY calculated
         enemyPokemon.hp = correctHp;
         if (enemyHpBar != null) enemyHpBar.value = correctHp;
-        Debug.Log("Resolution Accepted.");
+
+        // 2. Send ACK / Confirm so the Defender knows we agreed
+        if (networkManager != null)
+        {
+            networkManager.SendCalculationConfirm();
+        }
+
+        // 3. Unlock myself if needed
+        TryEndTurn();
     }
 
     public void OnGameOver(string winner)
@@ -433,55 +589,105 @@ public class BattleManager : MonoBehaviour
 
     // --- RFC 6: DAMAGE CALCULATION ---
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
-    {
-        if (!MoveDatabase.Moves.ContainsKey(moveName)) 
+    {   
+        Debug.Log($"[CALC DEBUG] {attacker.name} AtkStage: {attacker.stageAtk} | {defender.name} DefStage: {defender.stageDef}");
+
+        string lookupName = moveName.ToLower();
+
+        if (lookupName.StartsWith("x-") || lookupName == "used-item") return 0;
+
+        if (!MoveLoader.Moves.ContainsKey(lookupName)) 
         {
-            Debug.LogError($"Move {moveName} not found in database!");
+            Debug.LogWarning($"Move '{lookupName}' not found!");
             return 0;
         }
-        MoveData move = MoveDatabase.Moves[moveName];
+        MoveData move = MoveLoader.Moves[lookupName];
 
-        // 1. Determine Stats (Physical vs Special)
-        bool isPhysical = move.category == "Physical";
-        float atkStat = isPhysical ? attacker.attack : attacker.spAttack;
-        float defStat = isPhysical ? defender.defense : defender.spDefense;
+        // Status moves do 0 damage
+        if (move.damageClassId == 1 || move.power == 0) return 0;
 
-        // 2. Type Effectiveness (RFC Compliant via CSV)
-        float totalTypeMult = 1.0f;
-        string moveTypeLower = move.type.ToLower();
-
-        if (defender.typeMultipliers != null && defender.typeMultipliers.ContainsKey(moveTypeLower))
+        // 1. Apply Stages
+        float atkStat, defStat;
+        if (move.category == "Physical")
         {
-            totalTypeMult = defender.typeMultipliers[moveTypeLower];
+            atkStat = attacker.attack * GetStatMultiplier(attacker.stageAtk);
+            defStat = defender.defense * GetStatMultiplier(defender.stageDef);
         }
         else
         {
-            Debug.LogWarning($"No type data found for {moveTypeLower} vs {defender.name}. Defaulting to 1.0");
+            atkStat = attacker.spAttack * GetStatMultiplier(attacker.stageSpAtk);
+            defStat = defender.spDefense * GetStatMultiplier(defender.stageSpDef);
+        }
+        
+        // Burn halves physical attack!
+        if (attacker.status == StatusCondition.Burn && move.category == "Physical") atkStat *= 0.5f;
+
+        // --- NEW: Type Effectiveness ---
+        float typeMult = 1.0f;
+        string moveType = move.type.ToLower(); // Ensure lowercase to match dictionary keys!
+
+        if (defender.typeMultipliers.ContainsKey(moveType))
+        {
+            typeMult = defender.typeMultipliers[moveType];
         }
 
-        // 3. Formula
-        // RFC: Damage = (BasePower * AttackerStat * TypeEffectiveness) / DefenderStat
-        float numerator = move.power * atkStat * totalTypeMult;
-        float rawDamage = numerator / defStat;
-        
-        int finalDamage = Mathf.FloorToInt(rawDamage);
-        if (finalDamage < 1) finalDamage = 1; 
+        bool shouldAnnounce = (defender == myPokemon); 
 
-        // --- NEW DETAILED LOG ---
-        Debug.Log($"<color=cyan><b>[CALCULATION REPORT]</b></color> {attacker.name} used {moveName} on {defender.name}\n" +
-                  $"<b>Stats:</b> Atk: {atkStat} | Def: {defStat}\n" +
-                  $"<b>Math:</b> ({move.power} * {atkStat} * {totalTypeMult}) / {defStat}\n" +
-                  $"<b>Result:</b> {numerator} / {defStat} = <b>{finalDamage} DMG</b>");
+        if (shouldAnnounce)
+        {
+            if (typeMult > 1.0f) BroadcastLog("It's Super Effective!");
+            else if (typeMult < 1.0f && typeMult > 0f) BroadcastLog("It's not very effective...");
+            else if (typeMult == 0f) BroadcastLog($"It had no effect on {defender.name}!");
+        }
 
-        return finalDamage;
+        // --- Math ---
+        // (Power * Atk * Type) / Def
+        float rawDamage = (move.power * atkStat * typeMult) / defStat;
+        int damage = Mathf.FloorToInt(rawDamage);
+        if (damage < 1) damage = 1;
+
+        return damage;
     }
     
     private int PerformAttack(string moveName, Pokemon attacker, Pokemon defender, Slider targetHealthBar)
-    {
+    {   
+        // [NEW] Handle Items gracefully
+        if (moveName.StartsWith("X-") || moveName == "used-item")
+        {
+            // If it's a specific item like "X-Attack", announce it now!
+            if (moveName.StartsWith("X-"))
+            {
+                // Clean up the name "X-Attack" -> "X-Attack"
+                BroadcastLog($"{attacker.name} used {moveName}!");
+            }
+            else
+            {
+                BroadcastLog($"{attacker.name} used an Item!");
+            }
+            return 0; 
+        }
+        // 1. Get the Move Data (Fixes the "move undefined" error)
+        if (!MoveLoader.Moves.ContainsKey(moveName)) return 0;
+        MoveData move = MoveLoader.Moves[moveName];
+
+        // 2. Check for Status Moves (Don't deal damage if it's just a debuff)
+        // (Assuming you added damageClassId from the CSV, otherwise check power == 0)
+        if (move.damageClassId == 1 || move.power == 0)
+        {
+            TryApplyStatus(move, defender); // Apply Status/Debuff
+            ApplyStatusEffect(MoveLoader.Moves[moveName], attacker, defender); // Apply Stat Changes (Growl etc)
+            return 0; 
+        }
+
+        // 3. Regular Damage Logic
         int damage = CalculateDamage(moveName, attacker, defender);
         defender.hp -= damage;
         if (defender.hp < 0) defender.hp = 0;
         if (targetHealthBar != null) targetHealthBar.value = defender.hp;
+        
+        // 4. Try Apply Side Effects (e.g. Flamethrower burning)
+        TryApplyStatus(move, defender);
+
         return damage;
     }
 
@@ -564,23 +770,29 @@ public class BattleManager : MonoBehaviour
     }
 
     // 1. Add this function inside BattleManager
-    public void ForceUpdateSpectatorView(string myMonName, int myHp, int myMax, string enemyMonName, int enemyHp, int enemyMax)
+    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
     {
-        // FORCE UPDATE PLAYER SIDE (Host)
-        if (playerNameText != null) playerNameText.text = myMonName;
-        if (playerHpBar != null) 
+        // 1. Host Side (Player 1)
+        // If the name is different (or null), load the Pokemon data from DB
+        if (myPokemon == null || myPokemon.name != hName)
         {
-            playerHpBar.maxValue = myMax;
-            playerHpBar.value = myHp;
+            myPokemon = PokemonDatabase.GetPokemon(hName); 
         }
+        // CRITICAL FIX: Overwrite the DB values with the Live values from the packet
+        myPokemon.hp = hHp;
+        myPokemon.maxHp = hMax;
 
-        // FORCE UPDATE ENEMY SIDE (Joiner)
-        if (enemyNameText != null) enemyNameText.text = enemyMonName;
-        if (enemyHpBar != null) 
+        // 2. Client Side (Player 2)
+        if (enemyPokemon == null || enemyPokemon.name != cName)
         {
-            enemyHpBar.maxValue = enemyMax;
-            enemyHpBar.value = enemyHp;
+            enemyPokemon = PokemonDatabase.GetPokemon(cName);
         }
+        // CRITICAL FIX: Overwrite the DB values with the Live values
+        enemyPokemon.hp = cHp;
+        enemyPokemon.maxHp = cMax;
+
+        // 3. Now update the Visuals (Sliders/Texts) using this corrected data
+        UpdateBattleUI();
     }
 
     // 2. Add this helper to send the data (Only Host runs this)
@@ -598,27 +810,31 @@ public class BattleManager : MonoBehaviour
     public void PerformSwitch(int newIndex)
     {
         if (newIndex < 0 || newIndex >= myParty.Count) return;
-        if (myParty[newIndex].hp <= 0) return; // Cannot switch to fainted mon
+        if (myParty[newIndex].hp <= 0) return; 
 
-        // 1. Update Data
+        // 1. Capture Old Name for the message
+        string oldMonName = myPokemon.name;
+
+        myPokemon.ResetStages();
+
+        // 2. Update Data
         myActiveIndex = newIndex;
-        myPokemon = myParty[newIndex]; // Point the shortcut to the new mon
+        myPokemon = myParty[newIndex]; 
 
-        // 2. Update UI
+        // 3. Update UI
         UpdateBattleUI();
         
-        string log = $"{myUsername} sent out {myPokemon.name}!";
-        BroadcastLog(log);
+        // 4. Send Messages (The "Original Game" Style)
+        BroadcastLog($"{myUsername} withdrew {oldMonName}!");
+        BroadcastLog($"{myUsername} sent out {myPokemon.name}!");
 
-        // 3. Network: Tell Opponent & Spectators
-        // We need to add a "SWITCH_ANNOUNCE" packet type.
+        // 5. Network: Tell Opponent & Spectators
         if (networkManager != null)
         {
-            // Reuse BATTLE_SETUP for now, or create a new one. 
-            // Using BATTLE_SETUP is the easiest "lazy fix" because it already updates the enemy view!
+            // Tell opponent we switched
             networkManager.SendBattleSetup(myPokemon.name);
             
-            // Also update spectators immediately
+            // Update spectators so they see the new mon and current HP
             SendSpectatorUpdate();
         }
     }
@@ -646,13 +862,14 @@ public class BattleManager : MonoBehaviour
 
         if(btnPartyBack) btnPartyBack.onClick.AddListener(() => ShowMainMenu());
         
-        if(btnBagBack) btnBagBack.onClick.AddListener(() => ShowMainMenu());
 
         // [NEW] Hook up Item Buttons (We will write UseItem later)
+        if(btnBagBack) btnBagBack.onClick.AddListener(() => ShowMainMenu());
         if(btnXAttack)  btnXAttack.onClick.AddListener(() => UseItem("Attack"));
         if(btnXDefense) btnXDefense.onClick.AddListener(() => UseItem("Defense"));
         if(btnXSpAtk)   btnXSpAtk.onClick.AddListener(() => UseItem("SpAttack"));
         if(btnXSpDef)   btnXSpDef.onClick.AddListener(() => UseItem("SpDefense"));
+        if(btnXSpeed) btnXSpeed.onClick.AddListener(() => UseItem("Speed"));
 
         ShowMainMenu();
     }
@@ -794,16 +1011,27 @@ public class BattleManager : MonoBehaviour
                 // We must wait for their attack to hit our new pokemon.
                 if (hasEnemyCommitted)
                 {
-                    Debug.Log("[ExecuteMyMove] Switched, but enemy is waiting to attack. Staying locked.");
-                    // Do NOT clear hasEnemyCommitted. Do NOT call TryEndTurn.
-                    return; 
+                    // FIX: Changed "UNLOCKED" to "LOCKED" to be accurate
+                    Debug.Log("[ExecuteMyMove] Switched. Enemy attack is incoming. STAYING LOCKED.");
+                    // Do NOT unlock. We wait for OnCalculationReport to trigger the unlock.
                 }
-
-                TryEndTurn(); 
+                else
+                {
+                    // Both switched or enemy was idle. Turn is over.
+                    TryEndTurn(); 
+                }
             }
         }
         else
-        {
+        {   
+            if (!CanPokemonMove(myPokemon))
+            {
+                // We failed the check (Paralyzed/Sleep).
+                // Crucial: We MUST still send a packet to keep the network flow going.
+                // We temporarily swap our move to "Splash" (or "used-item") so it does 0 damage.
+                myPendingMove = "used-item"; 
+            }
+
             // --- ATTACK LOGIC ---
             lastMoveUsedByMe = myPendingMove;
             BroadcastLog($"{myUsername}'s {myPokemon.name} used {myPendingMove}!");
@@ -904,18 +1132,46 @@ public class BattleManager : MonoBehaviour
 
     public void UseItem(string statName)
     {
-        Debug.Log($"Used X-{statName}! (Logic coming soon)");
-        // Logic will be: 
-        // 1. Consume turn
-        // 2. Add +2 to stat stage
-        // 3. Send packet
+        bool canUse = false;
         
-        ShowMainMenu(); // Close bag after use
+        // 1. Check Inventory
+        if (statName == "Attack" && itemUsesAtk > 0) canUse = true;
+        else if (statName == "Defense" && itemUsesDef > 0) canUse = true;
+        else if (statName == "SpAttack" && itemUsesSpAtk > 0) canUse = true;
+        else if (statName == "SpDefense" && itemUsesSpDef > 0) canUse = true;
+        else if (statName == "Speed" && itemUsesSpeed > 0) canUse = true;
+
+        if (!canUse)
+        {
+            networkManager.AddChatMessage("System", "You are out of that item!");
+            return;
+        }
+
+        // 2. Apply Boost
+        // We clamp it between -6 and 6 because that's the Pokemon rule
+        if (statName == "Attack") { myPokemon.stageAtk = Mathf.Clamp(myPokemon.stageAtk + 2, -6, 6); itemUsesAtk--; }
+        else if (statName == "Defense") { myPokemon.stageDef = Mathf.Clamp(myPokemon.stageDef + 2, -6, 6); itemUsesDef--; }
+        else if (statName == "SpAttack") { myPokemon.stageSpAtk = Mathf.Clamp(myPokemon.stageSpAtk + 2, -6, 6); itemUsesSpAtk--; }
+        else if (statName == "SpDefense") { myPokemon.stageSpDef = Mathf.Clamp(myPokemon.stageSpDef + 2, -6, 6); itemUsesSpDef--; }
+        else if (statName == "Speed") { myPokemon.stageSpeed = Mathf.Clamp(myPokemon.stageSpeed + 2, -6, 6); itemUsesSpeed--; }
+
+        // 3. Log & Commit
+        string itemName = $"X-{statName}";
+        
+        // Use "Used Item" to pass the turn
+        CommitAction("used-item", 9999, false); 
+        ShowMainMenu();
     }
 
+    public float GetStatMultiplier(int stage)
+    {
+        if (stage >= 0) return (2.0f + stage) / 2.0f;
+        else return 2.0f / (2.0f + Mathf.Abs(stage));
+    }
     private void TryEndTurn()
     {
-        Debug.Log($"[TryEndTurn] Checking status... MyHP: {myPokemon.hp} | EnemyHP: {enemyPokemon.hp} | Pending: '{myPendingMove}' | EnemyCommitted: {hasEnemyCommitted}");
+        Debug.Log($"[TryEndTurn Check] MyHP: {myPokemon.hp}, EnemyHP: {enemyPokemon.hp}");
+        Debug.Log($"[TryEndTurn Flags] Pending: '{myPendingMove}', I_Committed: {hasICommitted}, Enemy_Committed: {hasEnemyCommitted}");
 
         // 1. Am I dead? (Forced Switch)
         if (myPokemon.hp <= 0) 
@@ -949,6 +1205,22 @@ public class BattleManager : MonoBehaviour
             return;
         }
 
+        // If we reached here, the turn is officially OVER. 
+        // Now we take Burn/Poison damage.
+        ProcessStatusDamage(myPokemon);
+
+        // If I died from Burn, I can't start a new turn!
+        if (myPokemon.hp <= 0)
+        {
+            BroadcastLog($"{myPokemon.name} fainted from its condition!");
+            // Trigger faint logic (same as OnCalculationReport)
+            // ... (You can copy the faint logic here or make a helper function)
+            // For now, simple safety:
+            SetButtonsInteractable(false);
+            networkManager.SendGameOver(enemyPokemon.name); // Enemy wins
+            return;
+        }
+
         // 5. ALL CLEAR!
         Debug.Log("[TryEndTurn] SUCCESS! Unlocking buttons.");
         SetButtonsInteractable(true);
@@ -956,5 +1228,192 @@ public class BattleManager : MonoBehaviour
         // Safety Reset
         hasICommitted = false;
         hasEnemyCommitted = false;
+    }
+
+    // Inside BattleManager.cs
+
+    public void ForceUnlockAndResetTurn()
+    {
+        // This is the absolute final state reset.
+        hasICommitted = false;
+        hasEnemyCommitted = false;
+        myPendingMove = "";
+        
+        // Clear the UI lock and update the menu
+        SetButtonsInteractable(true);
+        ShowMainMenu();
+
+        Debug.Log("[TURN END] FORCED RESET: All flags cleared and buttons unlocked.");
+    }
+
+    public void OnEnemySwitch(string newPokemonName)
+    {
+        // 1. If the enemy was dead, this means they finally replaced it!
+        if (enemyPokemon.hp <= 0)
+        {
+            BroadcastLog($"Opponent sent out {newPokemonName}!");
+            
+            // 2. Unlock my buttons so I can fight the new Pokemon
+            SetButtonsInteractable(true);
+            
+            // 3. Reset turn flags just in case
+            hasICommitted = false;
+            hasEnemyCommitted = false;
+        }
+    }
+
+    public void OnCalculationConfirm()
+    {
+        // The Protocol says we only do this if the report matched. 
+        // If we are here, the opponent confirmed our damage was correct.
+        
+        // 1. Clear flags because our action (Attacking) is fully done.
+        hasICommitted = false;
+        hasEnemyCommitted = false; 
+
+        // 2. Unlock the UI for the next turn
+        // (In your simultaneous logic, this will unlock you because you were the last one to act)
+        TryEndTurn();
+
+        Debug.Log("RFC Protocol: Turn Cycle Complete. State set to WAITING_FOR_MOVE.");
+    }
+
+    // Define Stat IDs for clarity (matches the CSV standard)
+    public enum StatID
+    {
+        HP = 1,
+        Attack = 2,
+        Defense = 3,
+        SpAttack = 4,
+        SpDefense = 5,
+        Speed = 6,
+        Accuracy = 7,
+        Evasion = 8
+    }
+
+    public void ApplyStatusEffect(MoveData move, Pokemon user, Pokemon target)
+    {
+        foreach (var change in move.statChanges)
+        {
+            // Positive = Buff User (Swords Dance), Negative = Nerf Enemy (Growl)
+            Pokemon affectedMon = (change.changeAmount > 0) ? user : target;
+            ApplyStatChange(affectedMon, (StatID)change.statId, change.changeAmount);
+        }
+    }
+
+    private void ApplyStatChange(Pokemon p, StatID stat, int amount)
+    {
+        string statName = "";
+        string riseFall = amount > 0 ? "rose" : "fell";
+
+        switch (stat)
+        {
+            case StatID.Attack: 
+                p.stageAtk = Mathf.Clamp(p.stageAtk + amount, -6, 6); 
+                statName = "Attack"; break;
+            case StatID.Defense: 
+                p.stageDef = Mathf.Clamp(p.stageDef + amount, -6, 6); 
+                statName = "Defense"; break;
+            case StatID.SpAttack: 
+                p.stageSpAtk = Mathf.Clamp(p.stageSpAtk + amount, -6, 6); 
+                statName = "Sp. Atk"; break;
+            case StatID.SpDefense: 
+                p.stageSpDef = Mathf.Clamp(p.stageSpDef + amount, -6, 6); 
+                statName = "Sp. Def"; break;
+            case StatID.Speed: 
+                p.stageSpeed = Mathf.Clamp(p.stageSpeed + amount, -6, 6); 
+                statName = "Speed"; break;
+        }
+
+        if (statName != "")
+        {
+            BroadcastLog($"{p.name}'s {statName} {riseFall}!");
+        }
+    }
+
+    public void TryApplyStatus(MoveData move, Pokemon target)
+    {
+        if (move.ailmentId == 0) return; // No ailment
+        if (target.status != StatusCondition.None) return; // Already has status
+
+        // Determine Chance
+        // If ailment_chance is 0, it usually means "Guaranteed" (like Will-O-Wisp), 
+        // UNLESS it's a damaging move (like Flamethrower) where 0 means 0.
+        // For simplicity:
+        int chance = move.ailmentChance;
+        if (chance == 0 && move.power == 0) chance = 100; // Status moves usually 100%
+        if (chance == 0 && move.power > 0) return; // Damaging moves with 0 chance have no effect
+
+        // Roll for it
+        if (Random.Range(0, 100) < chance)
+        {
+            target.status = (StatusCondition)move.ailmentId;
+            string msg = $"{target.name} is now {target.status}!";
+            BroadcastLog(msg);
+            
+            if (target.status == StatusCondition.Sleep) target.sleepTurns = Random.Range(1, 4);
+        }
+    }
+
+    public bool CanPokemonMove(Pokemon p)
+    {
+        if (p.status == StatusCondition.Paralysis)
+        {
+            // 25% chance to not move
+            if (UnityEngine.Random.Range(0, 4) == 0) 
+            {
+                BroadcastLog($"{p.name} is fully paralyzed!");
+                return false;
+            }
+        }
+        else if (p.status == StatusCondition.Sleep)
+        {
+            if (p.sleepTurns > 0)
+            {
+                p.sleepTurns--;
+                BroadcastLog($"{p.name} is fast asleep.");
+                return false;
+            }
+            else
+            {
+                p.status = StatusCondition.None;
+                BroadcastLog($"{p.name} woke up!");
+            }
+        }
+        // Frozen logic is similar to sleep/paralysis
+        return true;
+    }
+
+        public void ProcessStatusDamage(Pokemon p)
+    {
+        if (p.hp <= 0) return;
+
+        if (p.status == StatusCondition.Burn || p.status == StatusCondition.Poison)
+        {
+            int dmg = Mathf.FloorToInt(p.maxHp / 8.0f); // 1/8th damage standard
+            if (dmg < 1) dmg = 1;
+            
+            p.hp -= dmg;
+            BroadcastLog($"{p.name} is hurt by its {p.status}!");
+            
+            // Update UI
+            if (p == myPokemon) playerHpBar.value = p.hp;
+            else enemyHpBar.value = p.hp;
+        }
+    }
+
+    // Helper to clean up text "mega-punch" -> "Mega Punch"
+    public static string FormatName(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return "";
+        
+        // Split by dash (for "vine-whip")
+        string[] words = input.Split('-');
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (words[i].Length > 0) 
+                words[i] = char.ToUpper(words[i][0]) + words[i].Substring(1);
+        }
+        return string.Join(" ", words);
     }
 }
