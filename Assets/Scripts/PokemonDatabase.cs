@@ -9,11 +9,22 @@ public class PokemonDatabase : MonoBehaviour
     // Dictionary to store all loaded Pokemon by Name
     public static Dictionary<string, Pokemon> AllPokemon = new Dictionary<string, Pokemon>();
     public static bool IsLoaded = false;
+    private static LoadSprites spriteLoader;
 
     // Load data from Resources/pokemon.csv
     public static void LoadData()
     {
         if (IsLoaded) return;
+
+        // Find LoadSprites instance
+        if (spriteLoader == null)
+        {
+            spriteLoader = UnityEngine.Object.FindObjectOfType<LoadSprites>();
+            if (spriteLoader == null)
+            {
+                Debug.LogWarning("PokemonDatabase: No LoadSprites found in scene. Sprites will be null.");
+            }
+        }
 
         MoveLoader.LoadAllMoves();
 
@@ -85,6 +96,12 @@ public class PokemonDatabase : MonoBehaviour
                 // [FIX] Pass 'id' as the FIRST argument now
                 Pokemon p = new Pokemon(id, name, types, hp, atk, def, spAtk, spDef, speed);
                 
+                // Load sprite using pokedex number
+                if (spriteLoader != null && id > 0)
+                {
+                    p.sprite = spriteLoader.LoadSpriteByNumber(id);
+                }
+                
                 // --- NEW: Parse Resistance Columns Automatically ---
                 // The CSV has columns like "against_bug", "against_dark"
                 // We map these directly to the Pokemon's internal dictionary.
@@ -147,7 +164,9 @@ public class PokemonDatabase : MonoBehaviour
         {
             Pokemon original = AllPokemon[name];
             // [FIX] Added 'original.pokedexId' as the first argument
-            return new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed) 
+            Pokemon copy = new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed);
+            copy.sprite = original.sprite; // Copy sprite reference
+            return copy 
             { 
                 moves = new List<string>(original.moves),
                 typeMultipliers = new Dictionary<string, float>(original.typeMultipliers) // Copy dictionary too!

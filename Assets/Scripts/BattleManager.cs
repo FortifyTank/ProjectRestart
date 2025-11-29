@@ -170,9 +170,11 @@ public class BattleManager : MonoBehaviour
     {
         if (playerNameText != null) playerNameText.text = myPokemon.name;
         if (playerHpBar != null) { playerHpBar.maxValue = myPokemon.maxHp; playerHpBar.value = myPokemon.hp; }
+        if (playerImage != null && myPokemon.sprite != null) playerImage.sprite = myPokemon.sprite;
 
         if (enemyNameText != null) enemyNameText.text = enemyPokemon.name;
         if (enemyHpBar != null) { enemyHpBar.maxValue = enemyPokemon.maxHp; enemyHpBar.value = enemyPokemon.hp; }
+        if (enemyImage != null && enemyPokemon.sprite != null) enemyImage.sprite = enemyPokemon.sprite;
         
         for (int i = 0; i < moveButtons.Length; i++)
         {

@@ -16,6 +16,7 @@ public class Pokemon
     public int spDefense;
     public int speed;
     public List<string> moves;
+    public Sprite sprite; // [NEW] Store sprite reference
 
     // [NEW] Stores effectiveness data from CSV (e.g., "fire": 2.0)
     public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>(); 
