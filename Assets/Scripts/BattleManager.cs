@@ -173,7 +173,7 @@ public class BattleManager : MonoBehaviour
 
         if (enemyNameText != null) enemyNameText.text = enemyPokemon.name;
         if (enemyHpBar != null) { enemyHpBar.maxValue = enemyPokemon.maxHp; enemyHpBar.value = enemyPokemon.hp; }
-
+        
         for (int i = 0; i < moveButtons.Length; i++)
         {
             if (i < myPokemon.moves.Count)
@@ -342,12 +342,17 @@ public class BattleManager : MonoBehaviour
             {
                 Debug.Log("[OnCalculationReport] Enemy fainted. FORCE LOCKING buttons.");
                 SetButtonsInteractable(false); // HARD LOCK
-            }
-            else
+            }    
+            else if (string.IsNullOrEmpty(myPendingMove) && !isForcedSwitch)
             {
-                // They lived. Check if we can unlock.
-                // (We only unlock if we don't have a pending move, which we shouldn't)
-                TryEndTurn();
+                // If the action that triggered this report was the last thing to happen, unlock.
+                // Since I am the Attacker, receiving this report means the full resolution is done.
+                
+                // Note: We'll rely on TryEndTurn to check for fainting, but we need to reset flags first.
+                
+                hasICommitted = false;
+                hasEnemyCommitted = false;
+                TryEndTurn(); 
             }
         }
         
@@ -439,16 +444,24 @@ public class BattleManager : MonoBehaviour
     }
 
     public void SetButtonsInteractable(bool state)
+{
+    // [FIX] If we are a spectator, force state to false regardless of the input.
+    if (networkManager != null && networkManager.isSpectator)
     {
-        // Disable the main menu buttons, not the hidden move buttons
-        if (btnFight) btnFight.interactable = state;
-        if (btnBag) btnBag.interactable = state;
-        if (btnPokemon) btnPokemon.interactable = state;
-        if (btnRun) btnRun.interactable = state;
-        
-        // If it's NOT our turn, hide the sub-menus to prevent cheating
-        if (!state) ShowMainMenu();
+        state = false;
+        // Also ensure sub-panels are hidden, only showing the main action menu (Fight/Bag/etc)
+        ShowMainMenu();
     }
+    
+    // Now apply the final state
+    if (btnFight) btnFight.interactable = state;
+    if (btnBag) btnBag.interactable = state;
+    if (btnPokemon) btnPokemon.interactable = state;
+    if (btnRun) btnRun.interactable = state;
+    
+    // This handles hiding/showing sub-menus if the main menu state changes.
+    if (!state) ShowMainMenu(); 
+}
 
     public void SetOpponentPokemon(string pokemonName)
     {
@@ -728,12 +741,8 @@ public class BattleManager : MonoBehaviour
             if (switchIndex != -1)
             {
                 PerformSwitch(switchIndex);
-
-                // [FIX] Handling the "Slower Enemy" Case
-                // If the enemy has already committed (hasEnemyCommitted == true),
-                // it means they are WAITING to attack us (they were slower).
-                // We must NOT clear their flag, and we must NOT unlock buttons.
                 
+                // Clear my flags
                 hasICommitted = false; 
                 myPendingMove = "";
 
@@ -744,11 +753,11 @@ public class BattleManager : MonoBehaviour
                 if (hasEnemyCommitted)
                 {
                     Debug.Log("[ExecuteMyMove] Switched, but enemy is waiting to attack. Staying locked.");
-                    // Return immediately. Do not TryEndTurn.
+                    // Do NOT clear hasEnemyCommitted. Do NOT call TryEndTurn.
                     return; 
                 }
-                else
-                    TryEndTurn(); 
+
+                TryEndTurn(); 
             }
         }
         else
