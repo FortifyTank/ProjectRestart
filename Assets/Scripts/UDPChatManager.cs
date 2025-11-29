@@ -311,10 +311,15 @@ public class UDPChatManager : MonoBehaviour
             bool isHost = false;
             if (!string.IsNullOrEmpty(isHostStr)) bool.TryParse(isHostStr, out isHost);
 
+            string atkStr = ParseValue(rawData, "atk_stage");
+            string defStr = ParseValue(rawData, "def_stage");
+            int rAtk = string.IsNullOrEmpty(atkStr) ? 0 : int.Parse(atkStr);
+            int rDef = string.IsNullOrEmpty(defStr) ? 0 : int.Parse(defStr);
+
             if (battleManager != null) 
             {
-                // [FIX] Pass the 'isHost' boolean to the manager
-                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost);
+                // Pass the new ints to the function
+                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost, rAtk, rDef);
             }
         }
         else if (type == "CALCULATION_CONFIRM") // 
@@ -327,14 +332,15 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "RESOLUTION_REQUEST")
         {
-            // WRAP START
-            if (!isSpectator)
+            // Parse the values from the packet
+            int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
+            int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
+            
+            // Pass to BattleManager
+            if (battleManager != null) 
             {
-                int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
-                int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-                if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
+                battleManager.OnResolutionRequest(dmg, hp);
             }
-            // WRAP END
         }
         else if (type == "GAME_OVER")
         {
@@ -406,18 +412,20 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost)
-{
+    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost, int relevantAtkStage, int relevantDefStage)
+    {
         string payload = $"message_type: CALCULATION_REPORT\n" +
-                         $"attacker: {attacker}\n" +
-                         $"move_name: {move}\n" +
-                         $"damage_dealt: {dmg}\n" +
-                         $"defender_hp_remaining: {defHp}\n" +
-                         $"attacker_hp_remaining: {attHp}\n" +
-                         $"is_host: {isHost}\n" + // [NEW]
-                         $"sequence_number: {GetNextSeq()}";
+                        $"attacker: {attacker}\n" +
+                        $"move_name: {move}\n" +
+                        $"damage_dealt: {dmg}\n" +
+                        $"defender_hp_remaining: {defHp}\n" +
+                        $"attacker_hp_remaining: {attHp}\n" +
+                        $"is_host: {isHost}\n" + 
+                        // These are the stages actually used in the math
+                        $"atk_stage: {relevantAtkStage}\n" + 
+                        $"def_stage: {relevantDefStage}\n" + 
+                        $"sequence_number: {GetNextSeq()}";
 
-        // ... existing send logic ...
         SendReliablePacket(payload);
     }
 

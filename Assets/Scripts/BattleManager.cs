@@ -233,17 +233,37 @@ public class BattleManager : MonoBehaviour
     {
         if (string.IsNullOrEmpty(lastMoveUsedByMe)) return;
         
-        // Calculate damage
+        // 1. Calculate damage
+        // (Note: PerformAttack applies the damage locally to the enemyPokemon object)
         int damage = PerformAttack(lastMoveUsedByMe, myPokemon, enemyPokemon, enemyHpBar);
         
-        // Send Report (Updated with myPokemon.hp as the 5th argument)
+        // 2. Determine which stats to sync (NEW LOGIC)
+        int sentAtkStage = 0;
+        int sentDefStage = 0;
+
+        if (MoveLoader.Moves.ContainsKey(lastMoveUsedByMe.ToLower()))
+        {
+            MoveData move = MoveLoader.Moves[lastMoveUsedByMe.ToLower()];
+
+            if (move.category == "Physical")
+            {
+                sentAtkStage = myPokemon.stageAtk;      // My (Attacker) Physical Atk
+                sentDefStage = enemyPokemon.stageDef;   // Enemy (Defender) Physical Def
+            }
+            else if (move.category == "Special")
+            {
+                sentAtkStage = myPokemon.stageSpAtk;    // My (Attacker) Sp. Atk
+                sentDefStage = enemyPokemon.stageSpDef; // Enemy (Defender) Sp. Def
+            }
+        }
+
+        // 3. Send Report (Updated to include the 2 new stat arguments)
         if (networkManager != null)
         {
-            // I am the one calculating damage.
-            // If I am Host, then the Attacker was the Joiner (isHost = false).
-            // If I am Joiner, then the Attacker was the Host (isHost = true).
-            
-            bool wasHostAttacker = !networkManager.isHosting; // Invert my role
+            // Calculate "Was Host Attacker?" logic
+            // If I am hosting, and I am attacking, then Host is Attacker (true).
+            // If I am joining, and I am attacking, then Host is NOT Attacker (false).
+            bool wasHostAttacker = networkManager.isHosting; 
 
             networkManager.SendCalculationReport(
                 myPokemon.name,      
@@ -251,15 +271,18 @@ public class BattleManager : MonoBehaviour
                 damage,              
                 enemyPokemon.hp,     
                 myPokemon.hp,
-                wasHostAttacker // [NEW]
+                wasHostAttacker,
+                sentAtkStage, // Argument 7: Attack Stage (New!)
+                sentDefStage  // Argument 8: Defense Stage (New!)
             );
-            // [FIX] Tell Spectators that I just dealt damage!
+            
             SendSpectatorUpdate();
         }
     }
 
     // [FIX 1] Added 'bool isHostAttacker' to the function signature
-    public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker)
+    // THIS FIXES ERROR CS0103 (remoteAtkStage now exists!)
+    public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker, int remoteAtkStage, int remoteDefStage)
     {
         // --- SPECTATOR LOGIC ---
         if (networkManager.isSpectator) 
@@ -269,6 +292,62 @@ public class BattleManager : MonoBehaviour
             return; 
         }
         // -----------------------
+
+        // -----------------------
+
+        // [INSERT STEP 3 HERE: SYNC STATS]
+        // ---------------------------------------------------------
+        // We received the "True" stages used by the reporter. 
+        // Force our local Pokemon to match them so we don't desync next turn.
+
+        Pokemon attackerMon = (attackerName == myPokemon.name) ? myPokemon : enemyPokemon;
+        Pokemon defenderMon = (attackerName == myPokemon.name) ? enemyPokemon : myPokemon;
+        
+        // We need to know if the move was Physical or Special to know WHICH stat to sync.
+        // We can look up the pending move (if we are defender) or just infer it.
+        // For safety, let's sync strictly based on what was sent.
+        
+        // NOTE: This assumes remoteAtkStage corresponds to the stat used (Atk or SpAtk)
+        // We need the move category to know where to put it. 
+        // Since we don't have the move name in the arguments, we can rely on 'pendingMoveName' 
+        // if we are the defender, OR we just trust that 'remoteAtkStage' is the Attack stage for now.
+        
+        // Ideally, pass 'moveName' into this function too. 
+        // But for now, here is the robust "Defender" sync (since Discrepancy only happens when acting as Defender):
+        
+        if (!string.IsNullOrEmpty(pendingMoveName))
+        {
+            MoveData move = MoveLoader.Moves[pendingMoveName.ToLower()];
+            if (move.category == "Physical")
+            {
+                // Sync Physical Stats
+                if (attackerMon.stageAtk != remoteAtkStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {attackerMon.name} Atk from {attackerMon.stageAtk} to {remoteAtkStage}");
+                    attackerMon.stageAtk = remoteAtkStage;
+                }
+                if (defenderMon.stageDef != remoteDefStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {defenderMon.name} Def from {defenderMon.stageDef} to {remoteDefStage}");
+                    defenderMon.stageDef = remoteDefStage;
+                }
+            }
+            else if (move.category == "Special")
+            {
+                // Sync Special Stats
+                if (attackerMon.stageSpAtk != remoteAtkStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {attackerMon.name} SpAtk from {attackerMon.stageSpAtk} to {remoteAtkStage}");
+                    attackerMon.stageSpAtk = remoteAtkStage;
+                }
+                if (defenderMon.stageSpDef != remoteDefStage)
+                {
+                    Debug.LogWarning($"[SYNC] Fixing {defenderMon.name} SpDef from {defenderMon.stageSpDef} to {remoteDefStage}");
+                    defenderMon.stageSpDef = remoteDefStage;
+                }
+            }
+        }
+        // ---------------------------------------------------------
 
         if (isGameOver) return;
 
@@ -283,20 +362,62 @@ public class BattleManager : MonoBehaviour
             // 2. Calculate Damage
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
 
+            // Inside Logic Path A (Defender Logic)...
+            // ... after calculating damage ...
+
+            // 1. Determine which stats were relevant for this move
+            int sentAtkStage = 0;
+            int sentDefStage = 0;
+
+            if (!string.IsNullOrEmpty(pendingMoveName) && MoveLoader.Moves.ContainsKey(pendingMoveName.ToLower()))
+            {
+                MoveData move = MoveLoader.Moves[pendingMoveName.ToLower()];
+
+                if (move.category == "Physical")
+                {
+                    sentAtkStage = enemyPokemon.stageAtk;  // Enemy (Attacker) Physical Atk
+                    sentDefStage = myPokemon.stageDef;     // Me (Defender) Physical Def
+                }
+                else if (move.category == "Special")
+                {
+                    sentAtkStage = enemyPokemon.stageSpAtk; // Enemy (Attacker) Sp. Atk
+                    sentDefStage = myPokemon.stageSpDef;    // Me (Defender) Sp. Def
+                }
+            }
+
+            // 2. Send the report with these specific stages
+            if (networkManager != null) 
+            {
+                // FIXES BOTH ERRORS:
+                // 1. Added 'sentAtkStage' and 'sentDefStage' (Fixes CS7036)
+                // 2. Changed 'isHosting' to 'networkManager.isHosting' (Fixes CS0103)
+                
+                networkManager.SendCalculationReport(
+                    enemyPokemon.name, 
+                    pendingMoveName, 
+                    myCalculatedDamage, 
+                    myPokemon.hp, 
+                    enemyPokemon.hp, 
+                    networkManager.isHosting, // <--- FIXED HERE
+                    sentAtkStage,             // <--- FIXED HERE
+                    sentDefStage              // <--- FIXED HERE
+                );
+            }
+            
             // 3. Discrepancy Check
-            // 3. Discrepancy Check (The "Auto-Resolve" Fix)
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 0)
             {
-                // RFC NOTE: Strictly, the RFC says we should send a RESOLUTION_REQUEST here.
-                // However, since we know this is likely due to RNG variance (0.85 to 1.0 roll),
-                // we will "Auto-Resolve" it by trusting the Attacker's number as the Truth.
+                Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}. Sending RESOLUTION_REQUEST.");
                 
-                Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}. Auto-resolving by trusting Opponent.");
+                // RFC COMPLIANCE: Send my values to them
+                // We do NOT apply damage yet. We wait for them to agree.
+                int myCorrectHp = myPokemon.hp - myCalculatedDamage;
                 
-                // FORCE our local calculation to match theirs
-                myCalculatedDamage = damageDealt; 
-                
-                // We do NOT return. We proceed to Step 4 to apply the damage.
+                if (networkManager != null)
+                {
+                    networkManager.SendResolutionRequest(enemyPokemon.name, pendingMoveName, myCalculatedDamage, myCorrectHp);
+                }
+                return; // STOP HERE! Do not unlock buttons yet.
             }
 
             // 4. Apply Damage
@@ -383,9 +504,20 @@ public class BattleManager : MonoBehaviour
 
     public void OnResolutionRequest(int correctDamage, int correctHp)
     {
+        Debug.Log($"[RESOLUTION] Opponent corrected my math. Updating Damage: {correctDamage}, Enemy HP: {correctHp}");
+
+        // 1. Update MY view of the enemy to match what THEY calculated
         enemyPokemon.hp = correctHp;
         if (enemyHpBar != null) enemyHpBar.value = correctHp;
-        Debug.Log("Resolution Accepted.");
+
+        // 2. Send ACK / Confirm so the Defender knows we agreed
+        if (networkManager != null)
+        {
+            networkManager.SendCalculationConfirm();
+        }
+
+        // 3. Unlock myself if needed
+        TryEndTurn();
     }
 
     public void OnGameOver(string winner)
@@ -413,57 +545,59 @@ public class BattleManager : MonoBehaviour
 
     // --- RFC 6: DAMAGE CALCULATION ---
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
-{   
-    string lookupName = moveName.ToLower();
+    {   
+        Debug.Log($"[CALC DEBUG] {attacker.name} AtkStage: {attacker.stageAtk} | {defender.name} DefStage: {defender.stageDef}");
 
-    if (!MoveLoader.Moves.ContainsKey(lookupName)) 
-    {
-        Debug.LogWarning($"Move '{lookupName}' not found!");
-        return 0;
+        string lookupName = moveName.ToLower();
+
+        if (!MoveLoader.Moves.ContainsKey(lookupName)) 
+        {
+            Debug.LogWarning($"Move '{lookupName}' not found!");
+            return 0;
+        }
+        MoveData move = MoveLoader.Moves[lookupName];
+
+        // Status moves do 0 damage
+        if (move.damageClassId == 1 || move.power == 0) return 0;
+
+        // 1. Apply Stages
+        float atkStat, defStat;
+        if (move.category == "Physical")
+        {
+            atkStat = attacker.attack * GetStatMultiplier(attacker.stageAtk);
+            defStat = defender.defense * GetStatMultiplier(defender.stageDef);
+        }
+        else
+        {
+            atkStat = attacker.spAttack * GetStatMultiplier(attacker.stageSpAtk);
+            defStat = defender.spDefense * GetStatMultiplier(defender.stageSpDef);
+        }
+        
+        // Burn halves physical attack!
+        if (attacker.status == StatusCondition.Burn && move.category == "Physical") atkStat *= 0.5f;
+
+        // --- NEW: Type Effectiveness ---
+        float typeMult = 1.0f;
+        string moveType = move.type.ToLower(); // Ensure lowercase to match dictionary keys!
+
+        if (defender.typeMultipliers.ContainsKey(moveType))
+        {
+            typeMult = defender.typeMultipliers[moveType];
+        }
+
+        // --- LOGIC: Print the message ---
+        if (typeMult > 1.0f) BroadcastLog("It's Super Effective!");
+        else if (typeMult < 1.0f && typeMult > 0f) BroadcastLog("It's not very effective...");
+        else if (typeMult == 0f) BroadcastLog($"It had no effect on {defender.name}!");
+
+        // --- Math ---
+        // (Power * Atk * Type) / Def
+        float rawDamage = (move.power * atkStat * typeMult) / defStat;
+        int damage = Mathf.FloorToInt(rawDamage);
+        if (damage < 1) damage = 1;
+
+        return damage;
     }
-    MoveData move = MoveLoader.Moves[lookupName];
-
-    // Status moves do 0 damage
-    if (move.damageClassId == 1 || move.power == 0) return 0;
-
-    // 1. Apply Stages
-    float atkStat, defStat;
-    if (move.category == "Physical")
-    {
-        atkStat = attacker.attack * GetStatMultiplier(attacker.stageAtk);
-        defStat = defender.defense * GetStatMultiplier(defender.stageDef);
-    }
-    else
-    {
-        atkStat = attacker.spAttack * GetStatMultiplier(attacker.stageSpAtk);
-        defStat = defender.spDefense * GetStatMultiplier(defender.stageSpDef);
-    }
-    
-    // Burn halves physical attack!
-    if (attacker.status == StatusCondition.Burn && move.category == "Physical") atkStat *= 0.5f;
-
-    // --- NEW: Type Effectiveness ---
-    float typeMult = 1.0f;
-    string moveType = move.type.ToLower(); // Ensure lowercase to match dictionary keys!
-
-    if (defender.typeMultipliers.ContainsKey(moveType))
-    {
-        typeMult = defender.typeMultipliers[moveType];
-    }
-
-    // --- LOGIC: Print the message ---
-    if (typeMult > 1.0f) BroadcastLog("It's Super Effective!");
-    else if (typeMult < 1.0f && typeMult > 0f) BroadcastLog("It's not very effective...");
-    else if (typeMult == 0f) BroadcastLog($"It had no effect on {defender.name}!");
-
-    // --- Math ---
-    // (Power * Atk * Type) / Def
-    float rawDamage = (move.power * atkStat * typeMult) / defStat;
-    int damage = Mathf.FloorToInt(rawDamage);
-    if (damage < 1) damage = 1;
-
-    return damage;
-}
     
     private int PerformAttack(string moveName, Pokemon attacker, Pokemon defender, Slider targetHealthBar)
     {
