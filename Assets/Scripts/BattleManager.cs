@@ -251,34 +251,28 @@ public class BattleManager : MonoBehaviour
         }
     }
 
+    // [FIX 1] Added 'bool isHostAttacker' to the function signature
     public void OnCalculationReport(string attackerName, int damageDealt, int hpRemaining, bool isHostAttacker)
     {   
         // --- SPECTATOR LOGIC ---
         if (networkManager.isSpectator) 
         {
-            if (isHostAttacker) 
-            {
-                // Host Attacked -> Joiner (Enemy) took damage
-                enemyPokemon.hp = hpRemaining;
-                if(enemyHpBar != null) enemyHpBar.value = hpRemaining;
-            }
-            else
-            {
-                // Joiner Attacked -> Host (Player) took damage
-                myPokemon.hp = hpRemaining;
-                if(playerHpBar != null) playerHpBar.value = hpRemaining;
-            }
+            if (isHostAttacker) { enemyPokemon.hp = hpRemaining; if(enemyHpBar) enemyHpBar.value = hpRemaining; }
+            else { myPokemon.hp = hpRemaining; if(playerHpBar) playerHpBar.value = hpRemaining; }
             return; 
         }
         // -----------------------
 
         if (isGameOver) return;
 
-        // If I have a pending move (I am the defender)
+        // If I have a pending move (I am the DEFENDER)
         if (!string.IsNullOrEmpty(pendingMoveName))
         {
+            // [FIX] The enemy just attacked me. Their commitment is done.
+            if (attackerName == enemyPokemon.name) hasEnemyCommitted = false;
+
             int myCalculatedDamage = CalculateDamage(pendingMoveName, enemyPokemon, myPokemon);
-            
+
             if (Mathf.Abs(myCalculatedDamage - damageDealt) > 1)
             {
                 Debug.LogWarning($"[DISCREPANCY] Opponent said {damageDealt}, I calculated {myCalculatedDamage}");
@@ -288,7 +282,7 @@ public class BattleManager : MonoBehaviour
                 return;
             }
 
-            /// Apply Damage locally
+            // Apply Damage
             myPokemon.hp = hpRemaining;
             if (playerHpBar != null) playerHpBar.value = hpRemaining;
 
@@ -297,26 +291,17 @@ public class BattleManager : MonoBehaviour
 
             if (myPokemon.hp <= 0)
             {
-                // CASE 1: I FAINTED
-                // ------------------
-                // 1. Cancel pending moves (Zombie fix)
+                // [FAINT LOGIC]
                 hasICommitted = false; 
                 myPendingMove = ""; 
-                hasEnemyCommitted = false; // Clear enemy flag so we don't wait for them
-
-                // 2. Broadcast
+                hasEnemyCommitted = false; 
                 BroadcastLog($"{myUsername}'s {myPokemon.name} fainted!");
 
-                // 3. Check for survivors
-                bool hasAlivePokemon = false;
-                for (int i = 0; i < myParty.Count; i++) {
-                    if (myParty[i].hp > 0) { hasAlivePokemon = true; break; }
-                }
+                bool hasAlive = false;
+                for(int i=0; i<myParty.Count; i++) if(myParty[i].hp > 0) hasAlive = true;
 
-                if (hasAlivePokemon)
+                if (hasAlive)
                 {
-                    // Force Switch
-                    Debug.Log("Must choose replacement!");
                     isForcedSwitch = true;
                     OpenParty();
                     if (btnPartyBack) btnPartyBack.gameObject.SetActive(false);
@@ -324,45 +309,50 @@ public class BattleManager : MonoBehaviour
                 }
                 else
                 {
-                    // Game Over
                     if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
                     OnGameOver(enemyPokemon.name);
                 }
             }
             else
             {
-            // CASE 2: I SURVIVED
-            // ------------------
-            // Counter-Attack Check: Do I have a move waiting?
-            if (hasICommitted && !string.IsNullOrEmpty(myPendingMove))
-            {
-                Debug.Log("I survived! Counter-attacking now!");
-                ExecuteMyMove(); 
-                myPendingMove = ""; 
-            }
-            
-            // Turn is done for me. Try to unlock.
-            TryEndTurn();
-        }
-        }
-    else
-    {
-        // I am the ATTACKER (Enemy took damage)
-        enemyPokemon.hp = hpRemaining;
-        if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
-        
-        // CHECK: Did I just kill the enemy?
-        // [FIX] Do NOT check (attackerName == myPokemon.name && enemyPokemon.hp <= 0) here manually.
-        // Let TryEndTurn handle it! It's cleaner.
-        
-        if (string.IsNullOrEmpty(myPendingMove) && !isForcedSwitch)
-        {
-             TryEndTurn(); 
-        }
-    }
+                // CASE 2: I SURVIVED
+                // ------------------
+                // Counter-Attack Check: Do I have a move waiting?
+                // [SURVIVED LOGIC]
+                if (hasICommitted && !string.IsNullOrEmpty(myPendingMove))
+                {
+                    ExecuteMyMove();
+                }
 
-    SendSpectatorUpdate();
-}
+                // Turn is done for me. Try to unlock.
+                TryEndTurn();
+            }
+        }
+        // ================================================================
+        // I AM THE ATTACKER (I hit them)
+        // ================================================================
+        else
+        {
+            enemyPokemon.hp = hpRemaining;
+            if (enemyHpBar != null) enemyHpBar.value = hpRemaining;
+
+            // [CRITICAL FIX FOR BUG 3]
+            // Did I kill them?
+            if (enemyPokemon.hp <= 0)
+            {
+                Debug.Log("[OnCalculationReport] Enemy fainted. FORCE LOCKING buttons.");
+                SetButtonsInteractable(false); // HARD LOCK
+            }
+            else
+            {
+                // They lived. Check if we can unlock.
+                // (We only unlock if we don't have a pending move, which we shouldn't)
+                TryEndTurn();
+            }
+        }
+        
+        SendSpectatorUpdate();
+    }
 
     public void OnResolutionRequest(int correctDamage, int correctHp)
     {
@@ -462,35 +452,40 @@ public class BattleManager : MonoBehaviour
 
     public void SetOpponentPokemon(string pokemonName)
     {
-        Pokemon p = PokemonDatabase.GetPokemon(pokemonName);
+        // 1. Search Memory (Fixes Healing Bug)
+        Pokemon p = null;
+        for (int i = 0; i < enemyParty.Count; i++)
+        {
+            if (enemyParty[i].name == pokemonName) { p = enemyParty[i]; break; }
+        }
+        if (p == null)
+        {
+            p = PokemonDatabase.GetPokemon(pokemonName);
+            if (p != null) enemyParty.Add(p);
+        }
+
         if (p != null)
         {
             enemyPokemon = p;
             UpdateBattleUI();
-            Debug.Log($"Opponent is using: {pokemonName}");
             SendSpectatorUpdate();
 
-            // [FIX] Double Switch Logic
-            // Receiving this packet means the enemy has finished their action (Switching).
-            // We MUST clear their commitment flag, or TryEndTurn will think they are still busy.
+            // [FIX] Enemy finished switching. Clear flag.
             hasEnemyCommitted = false; 
 
-            // Case 1: Enemy switched mid-battle (Counter-Attack)
+            // Case A: Counter-Attack
             if (hasICommitted && !string.IsNullOrEmpty(myPendingMove))
             {
-                 Debug.Log("Enemy switched! Attacking the new target!");
                  ExecuteMyMove();
             }
-            // Case 2: Standard Switch (or New Round)
+            // Case B: Unlock (This handles the "Killer Unlock" scenario)
             else
             {
+                 Debug.Log("[SetOpponentPokemon] New opponent arrived. Unlocking.");
                  TryEndTurn();
             }
         }
-        else
-        {
-            Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
-        }
+        else Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
     }
 
     public string GetMyPokemonName() 
@@ -571,8 +566,6 @@ public class BattleManager : MonoBehaviour
             // Also update spectators immediately
             SendSpectatorUpdate();
         }
-        
-        SendSpectatorUpdate();
     }
 
     public void BroadcastLog(string text)
@@ -720,60 +713,60 @@ public class BattleManager : MonoBehaviour
     }
 
     public void ExecuteMyMove()
-    {   
-        // [FUTURE ANIMATION SPACE HERE]
-        // StartCoroutine(ShowTextAndAnim());
+    {
+        // [FUTURE ANIMATION SPACE]
+
         if (isMyActionSwitch)
         {
-            // PARSE: myPendingMove contains the NAME of the pokemon (e.g., "Charizard")
-            // We need to find its index in the party.
+            // --- SWITCH LOGIC ---
             int switchIndex = -1;
             for (int i = 0; i < myParty.Count; i++)
             {
-                if (myParty[i].name == myPendingMove)
-                {
-                    switchIndex = i;
-                    break;
-                }
+                if (myParty[i].name == myPendingMove) { switchIndex = i; break; }
             }
 
             if (switchIndex != -1)
             {
-                Debug.Log($"Switching to {myPendingMove}!");
                 PerformSwitch(switchIndex);
+
+                // [FIX] Handling the "Slower Enemy" Case
+                // If the enemy has already committed (hasEnemyCommitted == true),
+                // it means they are WAITING to attack us (they were slower).
+                // We must NOT clear their flag, and we must NOT unlock buttons.
+                
+                hasICommitted = false; 
+                myPendingMove = "";
+
+                // [CRITICAL FIX FOR BUG 5]
+                // If the enemy has committed a move but hasn't acted yet (they are slower),
+                // we must NOT clear their flag, and we must NOT unlock buttons.
+                // We must wait for their attack to hit our new pokemon.
+                if (hasEnemyCommitted)
+                {
+                    Debug.Log("[ExecuteMyMove] Switched, but enemy is waiting to attack. Staying locked.");
+                    // Return immediately. Do not TryEndTurn.
+                    return; 
+                }
+                else
+                    TryEndTurn(); 
             }
-            else
-            {
-                Debug.LogError($"Could not find pokemon {myPendingMove} in party!");
-            }
-            // [FIX] Clear flags so the game knows my turn is DONE.
-            hasICommitted = false; 
-            hasEnemyCommitted = false;
-            myPendingMove = "";
         }
         else
         {
-            // Standard Attack Logic
+            // --- ATTACK LOGIC ---
             lastMoveUsedByMe = myPendingMove;
             BroadcastLog($"{myUsername}'s {myPokemon.name} used {myPendingMove}!");
             
             if (networkManager != null) networkManager.SendAttackAnnounce(myPendingMove);
-
-            // [CRITICAL FIX] 
-            // We just fired our move. We are done with this turn.
-            // We need to clear the pending move immediately.
+            
+            // Clear my move so we don't fire again
             myPendingMove = ""; 
             
-            // NEW: If the enemy has ALREADY moved (which they have, because they switched first!),
-            // then the turn is effectively over for me. I should unlock my UI.
-            if (hasEnemyCommitted) 
-            {
-                 // Reset flags for next turn
-                 hasICommitted = false;
-                 hasEnemyCommitted = false;
-                 
-                 TryEndTurn();
-            }
+            // [CRITICAL FIX] 
+            // DO NOT CALL TryEndTurn() HERE!
+            // We just attacked. We don't know the result yet.
+            // We must WAIT for the Calculation Report (or Game Over) to unlock us.
+            Debug.Log("[ExecuteMyMove] Attack sent. Waiting for damage report...");
         }
     }
 
@@ -871,19 +864,20 @@ public class BattleManager : MonoBehaviour
 
     private void TryEndTurn()
     {
+        Debug.Log($"[TryEndTurn] Checking status... MyHP: {myPokemon.hp} | EnemyHP: {enemyPokemon.hp} | Pending: '{myPendingMove}' | EnemyCommitted: {hasEnemyCommitted}");
+
         // 1. Am I dead? (Forced Switch)
         if (myPokemon.hp <= 0) 
         {
-            Debug.Log("Cannot end turn: I fainted!");
+            Debug.Log("[TryEndTurn] BLOCKED: I fainted!");
             SetButtonsInteractable(false);
             return;
         }
 
         // 2. Is the enemy dead? (Waiting for replacement)
-        // [FIX] This is the guard that stops the buttons from unlocking!
         if (enemyPokemon.hp <= 0)
         {
-            Debug.Log("Cannot end turn: Enemy fainted! Waiting for new pokemon...");
+            Debug.Log("[TryEndTurn] BLOCKED: Enemy fainted! Waiting for new pokemon...");
             SetButtonsInteractable(false);
             return;
         }
@@ -891,7 +885,7 @@ public class BattleManager : MonoBehaviour
         // 3. Did I finish my move?
         if (!string.IsNullOrEmpty(myPendingMove))
         {
-            Debug.Log("Cannot end turn: I haven't moved yet.");
+            Debug.Log($"[TryEndTurn] BLOCKED: I still have a pending move: {myPendingMove}");
             SetButtonsInteractable(false);
             return;
         }
@@ -899,13 +893,13 @@ public class BattleManager : MonoBehaviour
         // 4. Did the enemy finish their move?
         if (hasEnemyCommitted)
         {
-            Debug.Log("Cannot end turn: Enemy still needs to act.");
+            Debug.Log("[TryEndTurn] BLOCKED: Enemy still needs to act.");
             SetButtonsInteractable(false);
             return;
         }
 
         // 5. ALL CLEAR!
-        Debug.Log("Turn Complete! Starting new round.");
+        Debug.Log("[TryEndTurn] SUCCESS! Unlocking buttons.");
         SetButtonsInteractable(true);
         
         // Safety Reset
