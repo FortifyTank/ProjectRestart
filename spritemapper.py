@@ -1,3 +1,4 @@
+# Pandas program to append a sprites column to the pokemon CSV file
 import pandas as pd
 df = pd.read_csv('Assets/Resources/pokemon.csv')
 # change 'pokedex_number' to whatever column holds the numeric ID

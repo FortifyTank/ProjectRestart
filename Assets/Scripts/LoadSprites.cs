@@ -1,6 +1,19 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// [DEPRECATED] Original sprite loading component - no longer actively used.
+/// 
+/// CURRENT SPRITE LOADING APPROACH:
+/// - BattleManager.UpdateBattleUI() loads sprites directly using Resources.Load<Sprite>("Sprites/{pokedexId}")
+/// - This approach is simpler and more reliable (no component dependencies or timing issues)
+/// 
+/// LEGACY APPROACH (this component):
+/// - Preloaded all sprites into a dictionary at startup
+/// - Had issues with timing (needed to load before PokemonDatabase.LoadData())
+/// - Required component to exist in scene
+/// - This component remains for reference but is not required for the game to work
+/// </summary>
 public class LoadSprites : MonoBehaviour
 {
     private Dictionary<int, Sprite> spritesByDex = new Dictionary<int, Sprite>();
