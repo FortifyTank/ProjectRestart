@@ -1,184 +1,216 @@
-using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
-using System;
+using UnityEngine;
+using System.Text.RegularExpressions; // Needed for splitting
+
+[System.Serializable]
+public class MoveData
+{
+    public string name;
+    public int id;
+    public string type;
+    public int power;
+    public int accuracy;
+    public int pp;
+    public string category; 
+    public int damageClassId; 
+    public int ailmentId;     
+    public int ailmentChance; 
+    public List<StatChangeEntry> statChanges = new List<StatChangeEntry>();
+}
 
 public class MoveLoader : MonoBehaviour
 {
-    // Maps CSV IDs to Strings (e.g., 1 -> "Normal")
-    public static Dictionary<int, string> TypeIdMap = new Dictionary<int, string>()
-    {
-        {1, "Normal"}, {2, "Fighting"}, {3, "Flying"}, {4, "Poison"}, {5, "Ground"},
-        {6, "Rock"}, {7, "Bug"}, {8, "Ghost"}, {9, "Steel"}, {10, "Fire"},
-        {11, "Water"}, {12, "Grass"}, {13, "Electric"}, {14, "Psychic"}, {15, "Ice"},
-        {16, "Dragon"}, {17, "Dark"}, {18, "Fairy"}
-    };
-
-    // Maps Damage Class IDs (1=Status, 2=Physical, 3=Special)
-    public static Dictionary<int, string> CategoryMap = new Dictionary<int, string>()
-    {
-        {1, "Status"}, {2, "Physical"}, {3, "Special"}
-    };
-
-    // [NEW] The Bridge: ID -> Name (e.g., 33 -> "Tackle")
-    public static Dictionary<int, string> MoveIdToName = new Dictionary<int, string>();
-
-    // Cache: Pokemon ID -> List of Move Names
+    public static Dictionary<string, MoveData> Moves = new Dictionary<string, MoveData>();
+    public static Dictionary<int, MoveData> MovesById = new Dictionary<int, MoveData>();
     public static Dictionary<int, List<string>> Learnsets = new Dictionary<int, List<string>>();
 
-    public static bool IsLoaded = false;
+    [Header("CSV Files")]
+    public TextAsset movesCsv;
+    public TextAsset moveMetaCsv;
+    public TextAsset moveStatChangesCsv;
+    public TextAsset pokemonMovesCsv; // Make sure this is assigned!
 
-    public static void LoadAllMoves()
+    void Awake()
     {
-        if (IsLoaded) return;
+        LoadMoves();
+        if(moveMetaCsv != null) LoadMoveMeta();
+        if(moveStatChangesCsv != null) LoadStatChanges();
+        if(pokemonMovesCsv != null) LoadLearnsets();
+    }
 
-        LoadMoveDatabase();
-        LoadLearnsets();
+    public static void LoadAllMoves() { } // Stub
+
+    void LoadMoves()
+    {
+        if (movesCsv == null) return;
+        Moves.Clear();
+        MovesById.Clear();
+
+        string[] lines = movesCsv.text.Split('\n');
         
-        IsLoaded = true;
-        Debug.Log($"[MoveLoader] Ready! Loaded {MoveDatabase.Moves.Count} moves and learnsets for {Learnsets.Count} Pokemon.");
-    }
-
-    private static void LoadMoveDatabase()
-    {
-        TextAsset file = Resources.Load<TextAsset>("moves");
-        if (!file) { Debug.LogError("moves.csv missing!"); return; }
-
-        string[] lines = file.text.Split('\n');
-        
-        // CSV Cols: id(0), identifier(1), ... type_id(3), power(4), ... damage_class_id(9)
-        for (int i = 1; i < lines.Length; i++)
-        {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            string[] data = ParseCSVLine(lines[i]);
-
-            try 
-            {
-                int id = int.Parse(data[0]); // [NEW] Grab the ID
-                string rawName = data[1]; 
-                string cleanName = FormatName(rawName);
-
-                int typeId = int.Parse(data[3]);
-                string typeName = TypeIdMap.ContainsKey(typeId) ? TypeIdMap[typeId] : "Normal";
-
-                int power = ParseInt(data[4]); 
-                int catId = int.Parse(data[9]);
-                string category = CategoryMap.ContainsKey(catId) ? CategoryMap[catId] : "Status";
-
-                // Add to Database
-                if (!MoveDatabase.Moves.ContainsKey(cleanName))
-                {
-                    MoveDatabase.Moves.Add(cleanName, new MoveData(typeName, category, power, id));
-                }
-
-                // [NEW] Build the Bridge
-                if (!MoveIdToName.ContainsKey(id))
-                {
-                    MoveIdToName.Add(id, cleanName);
-                }
-            }
-            catch { }
-        }
-    }
-
-    private static void LoadLearnsets()
-    {
-        TextAsset file = Resources.Load<TextAsset>("pokemon_moves");
-        if (!file) { Debug.LogError("pokemon_moves.csv missing!"); return; }
-
-        string[] lines = file.text.Split('\n');
-
-        // CSV Cols: pokemon_id(0), version_group_id(1), move_id(2) ...
-        for (int i = 1; i < lines.Length; i++)
-        {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            string[] data = ParseCSVLine(lines[i]);
-
-            try
-            {
-                int versionGroup = int.Parse(data[1]);
-                // FILTER: Only load Gen 7 (Sun/Moon = 18) to save memory/time
-                // If you want ALL moves, remove this line, but it might lag startup.
-                if (versionGroup != 18) continue; 
-
-                int pokeId = int.Parse(data[0]);
-                int moveId = int.Parse(data[2]);
-
-                // [NEW] Use the Bridge to find the name
-                if (MoveIdToName.ContainsKey(moveId))
-                {
-                    string moveName = MoveIdToName[moveId];
-
-                    if (!Learnsets.ContainsKey(pokeId))
-                    {
-                        Learnsets[pokeId] = new List<string>();
-                    }
-
-                    // Avoid duplicates
-                    if (!Learnsets[pokeId].Contains(moveName))
-                    {
-                        Learnsets[pokeId].Add(moveName);
-                    }
-                }
-            }
-            catch { }
-        }
-    }
-
-    // Helper to cleanup text "mega-punch" -> "Mega Punch"
-    public static string FormatName(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return "";
-        string[] words = input.Split('-');
-        for (int i = 0; i < words.Length; i++)
-            if (words[i].Length > 0) words[i] = char.ToUpper(words[i][0]) + words[i].Substring(1);
-        return string.Join(" ", words);
-    }
-
-    private static string[] ParseCSVLine(string line)
-    {
-        string pattern = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
-        return Regex.Split(line, pattern);
-    }
-
-    private static int ParseInt(string val)
-    {
-        if (string.IsNullOrEmpty(val)) return 0;
-        if (int.TryParse(val, out int result)) return result;
-        return 0;
-    }
-
-    public static void LoadStatChanges(string csvContent)
-    {
-        // Skip header row
-        string[] lines = csvContent.Split('\n');
-        
+        // Loop starts at 1 to skip Header
         for (int i = 1; i < lines.Length; i++)
         {
             string line = lines[i].Trim();
             if (string.IsNullOrEmpty(line)) continue;
-
+            
+            // Simple split (if your CSV has no commas inside quotes)
             string[] parts = line.Split(',');
+            
+            // Safety: Skip rows that look broken (too short)
+            if (parts.Length < 10) continue;
 
-            // File Format: move_id, stat_id, change
+            try
+            {
+                MoveData m = new MoveData();
+                
+                // USE SAFE PARSING HERE
+                m.id = ParseIntSafe(parts[0]);
+                m.name = parts[1]; 
+                
+                // Parse Type ID (Col 3) and convert to Name
+                int typeId = ParseIntSafe(parts[3]); 
+                m.type = GetTypeFromId(typeId); 
+
+                // Power/PP can be empty in CSV, so we check
+                m.power = (parts[4] == "") ? 0 : ParseIntSafe(parts[4]);
+                m.pp = (parts[5] == "") ? 0 : ParseIntSafe(parts[5]);
+                
+                m.damageClassId = ParseIntSafe(parts[9]);
+
+                m.category = (m.damageClassId == 2) ? "Physical" : (m.damageClassId == 3) ? "Special" : "Status";
+
+                // Add to Dictionaries
+                // Convert key to Lowercase to fix "Tackle" vs "tackle" issues
+                string key = m.name.ToLower();
+                
+                if (!Moves.ContainsKey(key)) Moves.Add(key, m);
+                if (!MovesById.ContainsKey(m.id)) MovesById.Add(m.id, m);
+            }
+            catch (System.Exception e)
+            {
+                // This prints the EXACT line that caused the crash so you can fix the CSV
+                Debug.LogError($"CRITICAL ERROR parsing Moves.csv at Line {i}: '{line}'. Error: {e.Message}");
+            }
+        }
+        Debug.Log($"Successfully loaded {Moves.Count} moves.");
+    }
+
+    // --- NEW HELPER: Prevents "Input string was not in a correct format" ---
+    int ParseIntSafe(string val)
+    {
+        if (string.IsNullOrEmpty(val)) return 0;
+        if (int.TryParse(val, out int result)) return result;
+        return 0; // Return 0 if it's text or garbage
+    }
+
+    string GetTypeFromId(int id)
+    {
+        switch(id)
+        {
+            case 1: return "Normal";
+            case 2: return "Fighting";
+            case 3: return "Flying";
+            case 4: return "Poison";
+            case 5: return "Ground";
+            case 6: return "Rock";
+            case 7: return "Bug";
+            case 8: return "Ghost";
+            case 9: return "Steel";
+            case 10: return "Fire";
+            case 11: return "Water";
+            case 12: return "Grass";
+            case 13: return "Electric";
+            case 14: return "Psychic";
+            case 15: return "Ice";
+            case 16: return "Dragon";
+            case 17: return "Dark";
+            case 18: return "Fairy";
+            default: return "Normal";
+        }
+    }
+
+    void LoadMoveMeta()
+    {
+        string[] lines = moveMetaCsv.text.Split('\n');
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            string[] parts = line.Split(',');
+            if (parts.Length >= 11)
+            {
+                int id = ParseIntSafe(parts[0]);
+                if (MovesById.ContainsKey(id))
+                {
+                    MovesById[id].ailmentId = ParseIntSafe(parts[2]);
+                    MovesById[id].ailmentChance = ParseIntSafe(parts[10]);
+                }
+            }
+        }
+    }
+
+    void LoadStatChanges()
+    {
+        string[] lines = moveStatChangesCsv.text.Split('\n');
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            string[] parts = line.Split(',');
             if (parts.Length >= 3)
             {
-                int moveId = int.Parse(parts[0]);
-                int statId = int.Parse(parts[1]);
-                int change = int.Parse(parts[2]);
-
-                // Find the move and add the data
-                if (MoveDatabase.MovesById.ContainsKey(moveId))
+                int id = ParseIntSafe(parts[0]);
+                if (MovesById.ContainsKey(id))
                 {
-                    MoveData move = MoveDatabase.MovesById[moveId];
-                    move.statChanges.Add(new StatChangeEntry 
-                    { 
-                        statId = statId, 
-                        changeAmount = change 
+                    MovesById[id].statChanges.Add(new StatChangeEntry { 
+                        statId = ParseIntSafe(parts[1]), 
+                        changeAmount = ParseIntSafe(parts[2]) 
                     });
                 }
             }
         }
-        Debug.Log("Stat Changes Loaded!");
+    }
+    
+    void LoadLearnsets()
+    {
+        // This stops the crash if you forgot to assign the CSV in inspector
+        if (pokemonMovesCsv == null) { Debug.LogWarning("PokemonMovesCsv is NULL!"); return; }
+
+        string[] lines = pokemonMovesCsv.text.Split('\n');
+        Learnsets.Clear();
+
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            string[] parts = line.Split(',');
+            
+            if (parts.Length < 3) continue;
+
+            int pokeId = ParseIntSafe(parts[0]);
+            int moveId = ParseIntSafe(parts[2]);
+            int methodId = ParseIntSafe(parts[3]); 
+            
+            // Load "Level Up" moves (Method 1)
+            if (methodId == 1) 
+            {
+                if (!MovesById.ContainsKey(moveId)) continue;
+                string moveName = MovesById[moveId].name; // This is the original name "Karate Chop"
+
+                if (!Learnsets.ContainsKey(pokeId))
+                    Learnsets[pokeId] = new List<string>();
+
+                // Store as lowercase to match our BattleManager logic!
+                string lowerName = moveName.ToLower();
+
+                if (!Learnsets[pokeId].Contains(lowerName))
+                {
+                    Learnsets[pokeId].Add(lowerName);
+                }
+            }
+        }
+        Debug.Log($"Loaded learnsets for {Learnsets.Count} Pokemon.");
     }
 }

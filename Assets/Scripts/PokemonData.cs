@@ -2,12 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+// (If you have GameConstants.cs, keep Enums there. If not, uncomment them here.)
+/* public enum StatusCondition { None, Paralysis, Sleep, Freeze, Burn, Poison }
+   public enum StatID { HP=1, Attack=2, Defense=3, ... } */
+
 [System.Serializable]
-public class Pokemon
+public class Pokemon 
 {
-    public int pokedexId;
     public string name;
-    public List<string> types;
+    public int pokedexId; 
     public int hp;
     public int maxHp;
     public int attack;
@@ -15,85 +18,41 @@ public class Pokemon
     public int spAttack;
     public int spDefense;
     public int speed;
-    public List<string> moves;
-
-    // [NEW] Stores effectiveness data from CSV (e.g., "fire": 2.0)
-    public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>(); 
     
-    public Pokemon(int id, string name, List<string> types, int hp, int atk, int def, int spAtk, int spDef, int spd)
-    {
-        this.pokedexId = id;
-        this.name = name;
-        this.types = types;
-        this.hp = hp;
-        this.maxHp = hp;
-        this.attack = atk;
-        this.defense = def;
-        this.spAttack = spAtk;
-        this.spDefense = spDef;
-        this.speed = spd;
-        this.moves = new List<string>();
-    }
+    public List<string> types = new List<string>();
+    public List<string> moves = new List<string>();
+    
+    // Dictionary for Type Effectiveness (e.g. "Fire" -> 2.0)
+    public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>();
 
+    // Stats & Status
     public int stageAtk = 0;
     public int stageDef = 0;
     public int stageSpAtk = 0;
     public int stageSpDef = 0;
     public int stageSpeed = 0;
+    public StatusCondition status = StatusCondition.None;
+    public int sleepTurns = 0; 
 
-    public void ResetStages()
+    // --- FIXED CONSTRUCTOR ---
+    // Now accepts List<string> _types instead of string _type
+    public Pokemon(int id, string _name, List<string> _types, int _hp, int _atk, int _def, int _spAtk, int _spDef, int _spd)
     {
-        stageAtk = 0;
-        stageDef = 0;
-        stageSpAtk = 0;
-        stageSpDef = 0;
-        stageSpeed = 0;
+        pokedexId = id;
+        name = _name;
+        types = _types; // Assign the list directly!
+        maxHp = _hp;
+        hp = _hp;
+        attack = _atk;
+        defense = _def;
+        spAttack = _spAtk;
+        spDefense = _spDef;
+        speed = _spd;
     }
-}
 
-public class StatChangeEntry
-{
-    public int statId;
-    public int changeAmount;
-}
-
-// 2. Add the list to your MoveData
-public class MoveData
-{
-    public string name;
-    public int id; // Make sure you have the ID stored!
-    public string type;
-    public int power;
-    public int accuracy;
-    public int pp;
-    public int damageClassId; // 1 = Status, 2 = Physical, 3 = Special
+    // Constructor Overload for backward compatibility (just in case)
+    public Pokemon() {}
     
-    // [NEW] The list of changes this move causes
-    public List<StatChangeEntry> statChanges = new List<StatChangeEntry>(); 
-}
-
-public class MoveDatabase
-{
-    public static Dictionary<string, MoveData> Moves = new Dictionary<string, MoveData>()
-    {
-    };
-
-    // Helper to auto-assign moves when loading from CSV
-    public static List<string> GetMovesForType(string type)
-    {
-        List<string> learnedMoves = new List<string>();
-        
-        // Default move
-        learnedMoves.Add("Tackle");
-
-        foreach (var move in Moves)
-        {
-            if (move.Value.type.Equals(type, System.StringComparison.OrdinalIgnoreCase))
-            {
-                if (!learnedMoves.Contains(move.Key)) learnedMoves.Add(move.Key);
-                if (learnedMoves.Count >= 4) break;
-            }
-        }
-        return learnedMoves;
-    }
+    public void ResetStages() { stageAtk = 0; stageDef = 0; stageSpAtk = 0; stageSpDef = 0; stageSpeed = 0; }
+    public void HealStatus() { status = StatusCondition.None; sleepTurns = 0; }
 }
