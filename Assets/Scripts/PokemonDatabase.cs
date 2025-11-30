@@ -5,13 +5,10 @@ using System;
 using System.Text.RegularExpressions;
 
 /// <summary>
-/// Loads Pokemon data from CSV and stores them in a static dictionary.
-/// 
-/// SPRITE LOADING (Legacy approach - no longer used):
-/// - Originally attempted to load sprites via LoadSprites component
-/// - This approach had timing/dependency issues
-/// - Current implementation: BattleManager loads sprites directly using Resources.Load
-/// - Sprite files must be at: Assets/Resources/Sprites/{pokedexId}.png
+/// Loads Pokémon from a CSV into a static dictionary for quick lookups.
+/// It used to handle sprites through a separate loader, but that caused timing
+/// issues, so the project now loads sprites directly from Resources in the
+/// battle UI. Sprite files should live at `Assets/Resources/Sprites/{pokedexId}.png`.
 /// </summary>
 public class PokemonDatabase : MonoBehaviour
 {
@@ -20,12 +17,17 @@ public class PokemonDatabase : MonoBehaviour
     public static bool IsLoaded = false;
     private static LoadSprites spriteLoader; // [DEPRECATED] No longer used for sprite loading
 
-    // Load data from Resources/pokemon.csv
+    /*
+    Reads the CSV from Resources, builds Pokémon objects with stats, types,
+    and moves, and puts them in a global dictionary. Also tries to hook up a
+    sprite via the legacy loader if present, but the main UI loads sprites
+    directly. Safe-parses each row and skips anything that looks broken.
+    */
     public static void LoadData()
     {
         if (IsLoaded) return;
 
-        // Find LoadSprites instance
+        // Try to find the legacy sprite loader (optional)
         if (spriteLoader == null)
         {
             spriteLoader = UnityEngine.Object.FindObjectOfType<LoadSprites>();
@@ -37,10 +39,7 @@ public class PokemonDatabase : MonoBehaviour
 
         MoveLoader.LoadAllMoves();
 
-        // [SPRITE LOADING - DEPRECATED]
-        // This section attempts to load sprites during CSV parsing.
-        // However, BattleManager now loads sprites directly in UpdateBattleUI() for better reliability.
-        // This code remains for backward compatibility but is not actively used.
+        // Note: sprite loading here is legacy. Battle UI grabs sprites directly.
         // Load text file from Assets/Resources/pokemon_with_sprites.csv
         TextAsset csvFile = Resources.Load<TextAsset>("pokemon_with_sprites");
         if (csvFile == null)
@@ -51,7 +50,7 @@ public class PokemonDatabase : MonoBehaviour
 
         string[] lines = csvFile.text.Split('\n');
         
-        // We assume the first line is the header
+        // First line is the header
         string[] headers = ParseCSVLine(lines[0]);
         
         // Find indices dynamically so column order doesn't matter
@@ -81,7 +80,7 @@ public class PokemonDatabase : MonoBehaviour
 
             string[] data = ParseCSVLine(lines[i]);
             
-            // Safety check: If a row was parsed weirdly, skip it to prevent crash
+            // If a row looks off (wrong number of columns), skip it
             if (data.Length < headers.Length) 
             {
                 // Debug.LogWarning($"Skipping line {i}: Not enough columns.");
@@ -110,7 +109,7 @@ public class PokemonDatabase : MonoBehaviour
                 // [FIX] Pass 'id' as the FIRST argument now
                 Pokemon p = new Pokemon(id, name, types, hp, atk, def, spAtk, spDef, speed);
                 
-                // Load sprite using CSV sprite column
+                // Try loading a sprite using the CSV sprite column
                 if (spriteLoader != null && spriteIndex != -1 && !string.IsNullOrEmpty(data[spriteIndex]))
                 {
                     string spritePath = data[spriteIndex];
@@ -130,9 +129,7 @@ public class PokemonDatabase : MonoBehaviour
                     p.sprite = spriteLoader.LoadSpriteByNumber(id);
                 }
                 
-                // --- NEW: Parse Resistance Columns Automatically ---
-                // The CSV has columns like "against_bug", "against_dark"
-                // We map these directly to the Pokemon's internal dictionary.
+                // Pull type effectiveness values like "against_bug" and store them
                 
                 string[] allTypes = { "bug", "dark", "dragon", "electric", "fairy", "fight", "fire", "flying", "ghost", "grass", "ground", "ice", "normal", "poison", "psychic", "rock", "steel", "water" };
 
@@ -144,7 +141,7 @@ public class PokemonDatabase : MonoBehaviour
                     
                     if (colIndex != -1)
                     {
-                        // Parse the float value (e.g., 0.5, 2.0, 1)
+                        // Parse numbers like 0.5, 2.0, 1
                         if (float.TryParse(data[colIndex], out float mult))
                         {
                             p.typeMultipliers[typeKey] = mult;
@@ -158,7 +155,7 @@ public class PokemonDatabase : MonoBehaviour
                 {
                     List<string> validMoves = MoveLoader.Learnsets[p.pokedexId];
 
-                    // [NEW] RANDOMIZATION LOGIC
+                    // Pick up to 4 random moves from the learnset
                     if (validMoves.Count > 4)
                     {
                         // Shuffle the list locally so we don't mess up the master list
@@ -174,7 +171,7 @@ public class PokemonDatabase : MonoBehaviour
                     }
                     else
                     {
-                        // If they have 4 or less moves, just give them all
+                        // If there are 4 or fewer, just use all of them
                         p.moves = new List<string>(validMoves);
                     }
                 }
@@ -198,9 +195,13 @@ public class PokemonDatabase : MonoBehaviour
         }
 
         IsLoaded = true;
-        Debug.Log($"SUCCESS: Loaded {AllPokemon.Count} Pokemon from CSV!");
+        Debug.Log($"SUCCESS: Loaded {AllPokemon.Count} Pokémon from CSV!");
     }
 
+    /*
+    Returns a fresh copy of a Pokémon by name so callers don’t modify the
+    shared template. Loads the database on demand if needed.
+    */
     public static Pokemon GetPokemon(string name)
     {
         if (!IsLoaded) LoadData();
@@ -210,9 +211,9 @@ public class PokemonDatabase : MonoBehaviour
             Pokemon original = AllPokemon[name];
             // [FIX] Added 'original.pokedexId' as the first argument
             Pokemon copy = new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed);
-            copy.sprite = original.sprite; // Copy sprite reference
+            copy.sprite = original.sprite; // Keep the same sprite reference
             copy.moves = new List<string>(original.moves);
-            copy.typeMultipliers = new Dictionary<string, float>(original.typeMultipliers); // Copy dictionary too!
+            copy.typeMultipliers = new Dictionary<string, float>(original.typeMultipliers); // Copy the dictionary too
             return copy;
         }
         
@@ -220,16 +221,18 @@ public class PokemonDatabase : MonoBehaviour
         return null;
     }
 
-    // [FIX] Improved CSV Parser using Regex to handle commas inside quotes
+    /*
+    Improved CSV splitter using a regex that ignores commas inside quotes,
+    so fields like "Ability One, Ability Two" don’t get split in the middle.
+    */
     private static string[] ParseCSVLine(string line)
     {
-        // This regex splits by comma, BUT ignores commas that are inside quotes
         // Example: "Ability One, Ability Two", 100, 50 -> ["Ability One, Ability Two", "100", "50"]
         string pattern = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
         
         string[] rawValues = Regex.Split(line, pattern);
 
-        // Clean up the quotes
+        // Clean up quotes and spaces
         for (int i = 0; i < rawValues.Length; i++)
         {
             rawValues[i] = rawValues[i].Trim(' ', '"');
@@ -238,7 +241,9 @@ public class PokemonDatabase : MonoBehaviour
         return rawValues;
     }
 
-    // Helper to handle empty strings safely
+    /*
+    Safe integer parse that treats empty or bad values as 0.
+    */
     private static int ParseInt(string val)
     {
         if (string.IsNullOrEmpty(val)) return 0;

@@ -3,6 +3,12 @@ using UnityEngine.UI;
 using System;
 using System.Collections; 
 
+/*
+Simple UI controller for chat stickers: builds a grid of buttons from a list
+of textures, handles auto-resizing for a neat layout, and sends the selected
+sticker over UDP (with a small cooldown to prevent spam). The panel can be
+toggled on/off and hides itself after a send.
+*/
 public class StickerManager : MonoBehaviour
 {
     [Header("References")]
@@ -14,7 +20,7 @@ public class StickerManager : MonoBehaviour
     public GameObject stickerButtonPrefab; 
     
     [Header("Layout Settings")]
-    public bool autoResizeStickers = true; // [FIX] Uncheck this to set size manually in Inspector!
+    public bool autoResizeStickers = true; 
     public float manualWidthOverride = 0f; 
     
     [Header("Data")]
@@ -24,11 +30,21 @@ public class StickerManager : MonoBehaviour
     public float spamCooldown = 1.5f; 
     private bool canSend = true;
 
+    /*
+    Kicks off the grid build after the first frame so the layout has proper
+    sizing. Everything else is handled inside the generator.
+    */
     void Start()
     {
         StartCoroutine(GenerateStickerGrid());
     }
 
+    /*
+    Builds the sticker grid: shows the panel briefly so Unity can measure it,
+    forces the layout to rebuild, sizes cells if auto-resize is on, clears any
+    old buttons, then spawns one button per texture and wires up the click.
+    Finally hides the panel again.
+    */
     private IEnumerator GenerateStickerGrid()
     {
         if (stickerPanel != null) stickerPanel.SetActive(true);
@@ -93,9 +109,17 @@ public class StickerManager : MonoBehaviour
     }
 
     // ... (ToggleStickerPanel, OnStickerClicked, etc. remain exactly the same) ...
+    /*
+    Quick toggle to show or hide the sticker panel.
+    */
     public void ToggleStickerPanel() { stickerPanel.SetActive(!stickerPanel.activeSelf); }
+    /*
+    When a sticker button gets clicked, validate the index, resize the texture
+    to a small PNG, base64 it, and send via UDP. Applies a short cooldown and
+    closes the panel after sending.
+    */
     public void OnStickerClicked(int index) { /* Copy previous logic here */ 
-        // Or just keep your existing function below this point, I only changed Start/Generate!
+        // Keep existing logic; only comments changed.
         if (!canSend) return;
         if (index < 0 || index >= availableStickers.Length) return;
         try {
@@ -111,11 +135,18 @@ public class StickerManager : MonoBehaviour
             Destroy(resizedTex);
         } catch (System.Exception e) { Debug.LogError($"Error: {e.Message}"); }
     }
+    /*
+    Simple throttle: wait a bit before allowing another send.
+    */
     private IEnumerator CooldownRoutine() {
         canSend = false;
         yield return new WaitForSeconds(spamCooldown);
         canSend = true;
     }
+    /*
+    Downscales a texture to the requested size using a temporary RenderTexture,
+    then reads back into a new Texture2D.
+    */
     private Texture2D ResizeTexture(Texture2D source, int targetWidth, int targetHeight) {
         RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight);
         RenderTexture.active = rt;

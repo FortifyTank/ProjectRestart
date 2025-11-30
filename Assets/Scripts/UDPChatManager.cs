@@ -9,6 +9,12 @@ using System.Threading;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 
+/*
+Handles lightweight UDP chat and battle sync: opens sockets, discovers/joins
+rooms, sends/receives packets, and keeps a simple reliability layer with
+sequence numbers, a resend queue, and ACKs. Also supports a spectator mode
+that relays state to extra viewers.
+*/
 public class UDPChatManager : MonoBehaviour
 {
     [Header("References")]
@@ -74,6 +80,10 @@ public class UDPChatManager : MonoBehaviour
     private List<PendingPacket> pendingPackets = new List<PendingPacket>();
     private Dictionary<string, HashSet<int>> receivedSequencesPerUser = new Dictionary<string, HashSet<int>>();
 
+    /*
+    Sets up initial UI state, generates a default username, and starts the
+    discovery listener so joiners can find hosts.
+    */
     void Start()
     {
         if (battleManager == null) battleManager = GetComponent<BattleManager>();
@@ -85,6 +95,10 @@ public class UDPChatManager : MonoBehaviour
         StartDiscoveryListener();
     }
 
+    /*
+    Pumps received UI queues, runs the resend timer, and broadcasts room
+    presence once per second when hosting.
+    */
     void Update()
     {
         ProcessQueues();
@@ -101,6 +115,10 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Simple resend loop: walks pending packets, resends on a timer until an
+    ACK arrives or retries run out. Drops timeouts without killing the app.
+    */
     private void HandleReliability()
     {
         lock (pendingPackets) 
@@ -133,6 +151,10 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Processes text/sticker chat, updates discovered rooms, and routes battle
+    packets to the right handlers. Keeps UI work off the network thread.
+    */
     private void ProcessQueues()
     {
         while (chatQueue.TryDequeue(out string rawMsg))
@@ -170,6 +192,11 @@ public class UDPChatManager : MonoBehaviour
     }
 
     // --- RFC MESSAGE ROUTING ---
+    /*
+    Routes battle-related messages to `BattleManager`: handshakes, turn commits,
+    attack/defense announces, calculation reports/confirmations, resolution
+    requests, KO/game-over notices, and spectator state sync.
+    */
     private void HandleBattleMessage(string type, string rawData)
     {
         if (type == "HANDSHAKE_REQUEST")
@@ -370,6 +397,9 @@ public class UDPChatManager : MonoBehaviour
 
     // --- SENDING FUNCTIONS ---
 
+    /*
+    Ask a host to connect: sends a handshake with username and a fresh sequence.
+    */
     public void SendHandshakeRequest()
     {
         string payload = $"message_type: HANDSHAKE_REQUEST\n" +
@@ -378,6 +408,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Reply to a joiner: includes username, a random seed, and sequence.
+    */
     public void SendHandshakeResponse()
     {
         // [FIX] Added 'username' so the Joiner knows my name!
@@ -388,6 +421,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Announce the active Pokémon to the other side so the UI can sync.
+    */
     public void SendBattleSetup(string pokemonName)
     {
         string payload = $"message_type: BATTLE_SETUP\n" +
@@ -398,6 +434,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Tell the opponent which move is being used.
+    */
     public void SendAttackAnnounce(string moveName)
     {
         string payload = $"message_type: ATTACK_ANNOUNCE\n" +
@@ -406,6 +445,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);;
     }
 
+    /*
+    Signal readiness to defend so the attacker can resolve damage.
+    */
     public void SendDefenseAnnounce()
     {
         string payload = $"message_type: DEFENSE_ANNOUNCE\n" +
@@ -413,6 +455,10 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Send the official damage math: attacker, move, damage dealt, HP left, and
+    the relevant stat stages used in the calculation.
+    */
     public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost, int relevantAtkStage, int relevantDefStage)
     {
         string payload = $"message_type: CALCULATION_REPORT\n" +
@@ -430,6 +476,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Confirm agreement on the calculation; lets turn flow continue.
+    */
     public void SendCalculationConfirm()
     {
         string payload = $"message_type: CALCULATION_CONFIRM\n" +
@@ -437,6 +486,10 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
     
+    /*
+    Request a correction when local math disagrees; includes the values
+    calculated locally for comparison.
+    */
     public void SendResolutionRequest(string attacker, string move, int myCalcDamage, int myCalcHp)
     {
         string payload = $"message_type: RESOLUTION_REQUEST\n" +
@@ -449,6 +502,9 @@ public class UDPChatManager : MonoBehaviour
         AddChatMessage("System", "Discrepancy! Sending Resolution Request...");
     }
 
+    /*
+    Announce the winner and close out the match.
+    */
     public void SendGameOver(string winnerName)
     {
         string payload = $"message_type: GAME_OVER\n" +
@@ -458,6 +514,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Send a normal text chat message and queue it locally so the UI updates.
+    */
     private void SendChatMessage(string messageText)
     {
         string payload = $"message_type: CHAT_MESSAGE\n" +
@@ -469,6 +528,9 @@ public class UDPChatManager : MonoBehaviour
         chatQueue.Enqueue($"TEXT_CMD|Me|{messageText}");
     }
 
+    /*
+    Send a system line (non-user) and echo it into the local chat.
+    */
     private void SendSystemMessage(string messageText)
     {
         string payload = $"message_type: CHAT_MESSAGE\n" +
@@ -480,6 +542,9 @@ public class UDPChatManager : MonoBehaviour
         chatQueue.Enqueue($"TEXT_CMD|System|{messageText}"); 
     }
 
+    /*
+    Broadcast a system chat message to peers without queuing it locally.
+    */
     public void SendSystemMessagePacket(string text)
     {
         // Sends a chat message labeled as "System" to everyone
@@ -491,6 +556,9 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Send a sticker payload (base64 PNG) and add it to the local chat queue.
+    */
     public void SendStickerMessage(string base64Data)
     {
         string payload = $"message_type: CHAT_MESSAGE\n" +
@@ -504,12 +572,19 @@ public class UDPChatManager : MonoBehaviour
 
     // --- LOW LEVEL UDP + ACK LOGIC ---
 
+    /*
+    Increment and return the next sequence number for reliability.
+    */
     private int GetNextSeq() 
     { 
         localSequenceNumber++;
         return localSequenceNumber; 
     }
 
+    /*
+    Adds the payload to the resend list for the main peer and any spectators,
+    then sends immediately. ACKs remove entries.
+    */
     private void SendReliablePacket(string payload)
     {
         int seq = int.Parse(ParseValue(payload, "sequence_number"));
@@ -529,6 +604,10 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Track a packet for resends and fire the first send. Stores destination
+    to scope ACK removal per peer.
+    */
     private void AddToPending(int seq, string payload, IPEndPoint dest)
     {
         lock (pendingPackets)
@@ -546,6 +625,9 @@ public class UDPChatManager : MonoBehaviour
         SendRawBytes(Encoding.UTF8.GetBytes(payload), dest);
     }
 
+    /*
+    Send an ACK back to the sender for the given sequence number.
+    */
     private void SendAck(int seqToAck, IPEndPoint target)
     {
         string payload = $"message_type: ACK\nack_number: {seqToAck}";
@@ -553,6 +635,9 @@ public class UDPChatManager : MonoBehaviour
         try { chatClient.Send(bytes, bytes.Length, target); } catch {}
     }
 
+    /*
+    Reply to a spectator or joiner directly with a handshake response.
+    */
     private void SendHandshakeResponseTo(IPEndPoint target)
     {
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
@@ -562,6 +647,9 @@ public class UDPChatManager : MonoBehaviour
         AddToPending(GetNextSeq(), payload, target);
     }
 
+    /*
+    Low-level send with a socket lock to avoid thread contention.
+    */
     private void SendRawBytes(byte[] bytes, IPEndPoint endPoint)
     {
         try
@@ -579,11 +667,18 @@ public class UDPChatManager : MonoBehaviour
     }
 
     // Helper for old calls
+    /*
+    Helper overload to send to an IP/port pair.
+    */
     private void SendRawBytes(byte[] bytes, string ip, int port)
     {
         SendRawBytes(bytes, new IPEndPoint(IPAddress.Parse(ip), port));
     }
 
+    /*
+    Background receive loop: handles ACKs, relays when hosting, queues chat,
+    registers spectators, and forwards battle packets to the main thread.
+    */
     private void ReceiveChatData()
     {
         IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
@@ -677,6 +772,9 @@ public class UDPChatManager : MonoBehaviour
 
     // --- UI & UTILS ---
 
+    /*
+    Host a room: bind the socket, flip UI to chat, and start broadcasting.
+    */
     public void OnClick_HostGame()
     {
         isHosting = true;
@@ -688,6 +786,9 @@ public class UDPChatManager : MonoBehaviour
         if(statusText != null) statusText.text = "Hosting...";
     }
 
+    /*
+    Join a room: set the target IP/port, bind, send handshake, and switch UI.
+    */
     public void JoinGame(string ip)
     {
         targetIP = ip;
@@ -701,11 +802,18 @@ public class UDPChatManager : MonoBehaviour
         if(statusText != null) statusText.text = "Joining...";
     }
     
+    /*
+    Send the text typed into the input field.
+    */
     public void OnClick_Send()
     {
         if(inputMessage != null) { SendChatMessage(inputMessage.text); inputMessage.text = ""; }
     }
 
+    /*
+    Create and bind the UDP socket, enlarge buffers, and start the receive
+    thread. Uses a random port if the preferred one is busy.
+    */
     private void SetupChatSocket()
     {
         try 
@@ -727,6 +835,9 @@ public class UDPChatManager : MonoBehaviour
         catch (System.Exception e) { AddChatMessage("Error", "Bind failed: " + e.Message); }
     }
 
+    /*
+    Broadcast a simple ROOM announcement so joiners can discover the host.
+    */
     private void BroadcastPresence()
     {
         try
@@ -741,6 +852,10 @@ public class UDPChatManager : MonoBehaviour
         catch (System.Exception) { }
     }
 
+    /*
+    Start a background listener for ROOM broadcasts, queuing discovered IPs
+    when not hosting.
+    */
     private void StartDiscoveryListener()
     {
         Thread discoveryThread = new Thread(() => 
@@ -766,6 +881,9 @@ public class UDPChatManager : MonoBehaviour
         discoveryThread.Start();
     }
 
+    /*
+    Spawn a “Join {ip}” button in the room list and wire it up.
+    */
     private void CreateRoomButton(string ip)
     {
         if(roomButtonPrefab == null || roomListContent == null) return;
@@ -777,11 +895,18 @@ public class UDPChatManager : MonoBehaviour
         btn.GetComponent<Button>().onClick.AddListener(() => JoinGame(ip));
     }
 
+    /*
+    Queue a chat line for the UI thread to display.
+    */
     public void AddChatMessage(string sender, string msg)
     {
         chatQueue.Enqueue($"TEXT_CMD|{sender}|{msg}");
     }
 
+    /*
+    Extracts a value by key from the newline-delimited payload format.
+    Accepts optional spaces after the colon.
+    */
     private string ParseValue(string raw, string key)
 {
     foreach (string line in raw.Split('\n'))
@@ -800,6 +925,9 @@ public class UDPChatManager : MonoBehaviour
     return "";
 }
     
+    /*
+    Cleanly shut down sockets and background threads when exiting.
+    */
     private void OnApplicationQuit()
     {
         isAppRunning = false;
@@ -808,6 +936,9 @@ public class UDPChatManager : MonoBehaviour
         if (receiveThread != null) receiveThread.Abort();
     }
 
+    /*
+    Instantiate a text chat line and scroll the view to the bottom.
+    */
     public void SpawnText(string sender, string message)
     {
         if (textMessagePrefab == null || chatContent == null) return;
@@ -820,6 +951,9 @@ public class UDPChatManager : MonoBehaviour
         if(scrollRect != null) scrollRect.verticalNormalizedPosition = 0f;
     }
 
+    /*
+    Instantiate a sticker message from base64 data and size it nicely.
+    */
     private void SpawnSticker(string sender, string base64Data)
     {
         if (stickerMessagePrefab == null || chatContent == null) return;
@@ -851,6 +985,10 @@ public class UDPChatManager : MonoBehaviour
         if (scrollRect != null) scrollRect.verticalNormalizedPosition = 0f;
     }
 
+    /*
+    Enter spectator mode for a given IP: bind, send a request, flip UI, and
+    wait for sync packets.
+    */
     public void JoinAsSpectator(string targetIP)
     {
         if(inputUsername != null && inputUsername.text.Length > 0) myUsername = inputUsername.text; 
@@ -872,6 +1010,9 @@ public class UDPChatManager : MonoBehaviour
 
     public TMP_InputField spectateIpInput;
 
+    /*
+    UI hook to join as a spectator using the input IP or localhost.
+    */
     public void OnClick_Spectate() {
         if(spectateIpInput != null && spectateIpInput.text.Length > 0)
             JoinAsSpectator(spectateIpInput.text);
@@ -879,6 +1020,9 @@ public class UDPChatManager : MonoBehaviour
             JoinAsSpectator("127.0.0.1"); 
     }
 
+    /*
+    Send raw data to all registered spectators.
+    */
     private void RelayToSpectators(string rawData)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(rawData);
@@ -888,6 +1032,10 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Repackage an incoming message with a fresh sequence and forward it to
+    everyone except the original sender.
+    */
     private void HostRelay(string originalText, IPEndPoint senderEP)
     {
         string cleanMsg = "";
@@ -923,6 +1071,9 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Snapshot host/client Pokémon names and HP values to keep spectators in sync.
+    */
     public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
     {
         string payload = $"message_type: SPECTATOR_SYNC\n" +
@@ -941,6 +1092,9 @@ public class UDPChatManager : MonoBehaviour
         }
     }
 
+    /*
+    Send the turn commit payload: chosen move/switch, speed, and tie-breaker.
+    */
     public void SendCommitPacket(string move, int speed, bool isSwitch, int tieBreaker)
     {
         string payload = $"message_type: COMMIT_TURN\n" +
@@ -955,6 +1109,9 @@ public class UDPChatManager : MonoBehaviour
     // Inside UDPChatManager.cs
 
     // New Sending Function
+    /*
+    Notify the peer that the turn is over.
+    */
     public void SendTurnEndPacket()
     {
         string payload = $"message_type: TURN_END\n" +
