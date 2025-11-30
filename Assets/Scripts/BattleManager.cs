@@ -145,24 +145,31 @@ public class BattleManager : MonoBehaviour
             // Spectators don't send setup
             return; 
         }
-        // Build my team
+        // 2. BUILD MY PARTY (6v6 Logic)
         myParty.Clear();
         enemyParty.Clear(); // Track opponent's team
 
-        // Get starter Pokemon
-        string starterName = PokemonSelector.UserSelection;
-        if (string.IsNullOrEmpty(starterName) || PokemonDatabase.GetPokemon(starterName) == null) 
-            starterName = "Pikachu";
-
-        myParty.Add(PokemonDatabase.GetPokemon(starterName));
-
-        // Add random Pokemon
-        string[] randomPool = { "Charizard", "Blastoise", "Venusaur", "Gengar", "Snorlax", "Dragonite", "Mewtwo", "Eevee" };
-        
-        for (int i = 0; i < 5; i++)
+        // Loop through the 6 slots from the Selector
+        int validCount = 0;
+        for (int i = 0; i < 6; i++)
         {
-            string randName = randomPool[UnityEngine.Random.Range(0, randomPool.Length)];
-            myParty.Add(PokemonDatabase.GetPokemon(randName));
+            string name = PokemonSelector.PartyData[i];
+            
+            if (!string.IsNullOrEmpty(name))
+            {
+                Pokemon p = PokemonDatabase.GetPokemon(name);
+                if (p != null) 
+                {
+                    myParty.Add(p);
+                    validCount++;
+                }
+            }
+        }
+
+        // If user didn't pick ANY, give them a Pikachu so game doesn't crash
+        if (validCount == 0)
+        {
+            myParty.Add(PokemonDatabase.GetPokemon("Pikachu"));
         }
 
         // Set active one

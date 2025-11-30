@@ -6,76 +6,159 @@ using System.Linq;
 
 public class PokemonSelector : MonoBehaviour
 {
-    [Header("UI References")]
-    public GameObject panelPokedex;      // The new panel we will make
-    public GameObject panelMainMenu;     // The existing menu to go back to
-    public Transform listContent;        // The content area of the ScrollView
-    public GameObject pokemonButtonPrefab; // A prefab for the list item
-    public TMP_Text selectedPokemonText; // To show user what they picked on Main Menu
+    [Header("Panels")]
+    public GameObject panelMainMenu;     
+    public GameObject panelParty;        
+    public GameObject panelPokedex;      
 
-    // Global variable to store the user's choice
-    public static string UserSelection = "Pikachu"; // Default safety
+    [Header("Pokedex UI")]
+    public Transform listContent;        
+    public GameObject pokemonButtonPrefab; 
+    public TMP_InputField searchInput;   
 
-    private bool isListPopulated = false;
+    [Header("Party Slots")]
+    public Button[] slotButtons;         
+    
+    // We store the actual names here
+    public static string[] PartyData = new string[6]; 
+
+    // Which slot are we currently changing?
+    // [FIX] Made public so you can see it in Inspector for debugging
+    public int currentEditingSlotIndex = -1; 
+    private List<string> allPokemonNames = new List<string>();
 
     void Start()
     {
-        // Ensure Database is loaded immediately
         PokemonDatabase.LoadData();
-        
-        // Hide Pokedex at start
+        allPokemonNames = PokemonDatabase.AllPokemon.Keys.OrderBy(n => n).ToList();
+
+        // Start State
+        panelMainMenu.SetActive(true);
+        panelParty.SetActive(false);
         panelPokedex.SetActive(false);
+        
+        UpdateSlotUI(); // Ensure UI matches empty data at start
+
+        // Hook up Slot Buttons dynamically
+        for (int i = 0; i < slotButtons.Length; i++)
+        {
+            int x = i; // Capture index
+            slotButtons[i].onClick.RemoveAllListeners(); // [FIX] Clear old listeners
+            slotButtons[i].onClick.AddListener(() => OnSlotClicked(x));
+        }
+
+        if (searchInput != null) searchInput.onValueChanged.AddListener(OnSearchValueChanged);
     }
 
-    public void OpenPokedex()
+    // --- NAVIGATION ---
+
+    public void GoToPartyScreen()
     {
         panelMainMenu.SetActive(false);
-        panelPokedex.SetActive(true);
-
-        if (!isListPopulated)
-        {
-            PopulateList();
-            isListPopulated = true;
-        }
+        panelParty.SetActive(true);
+        panelPokedex.SetActive(false);
+        UpdateSlotUI();
     }
 
-    public void ClosePokedex()
+    public void BackToMainMenu()
     {
-        panelPokedex.SetActive(false);
+        panelParty.SetActive(false);
         panelMainMenu.SetActive(true);
     }
 
-    private void PopulateList()
+    private void OnSlotClicked(int index)
     {
-        // clear existing children if any
-        foreach (Transform child in listContent) Destroy(child.gameObject);
+        currentEditingSlotIndex = index;
+        Debug.Log($"[DEBUG] Editing Slot: {index}"); // Check console for this!
+        
+        // Go to List
+        panelParty.SetActive(false);
+        panelPokedex.SetActive(true);
+        
+        if (searchInput != null) searchInput.text = "";
+        RefreshList("");
+    }
 
-        // Sort alphabetically for easier finding
-        var sortedList = PokemonDatabase.AllPokemon.Keys.OrderBy(n => n).ToList();
+    public void BackToPartyScreen()
+    {
+        panelPokedex.SetActive(false);
+        panelParty.SetActive(true);
+        
+        // [FIX] Force UI update whenever we return to this screen
+        UpdateSlotUI(); 
+    }
 
-        foreach (string pokeName in sortedList)
+    // --- UI UPDATES ---
+
+    private void UpdateSlotUI()
+    {
+        for (int i = 0; i < slotButtons.Length; i++)
         {
-            GameObject btnObj = Instantiate(pokemonButtonPrefab, listContent);
+            TMP_Text txt = slotButtons[i].GetComponentInChildren<TMP_Text>();
             
-            // Setup Label
-            TMP_Text label = btnObj.GetComponentInChildren<TMP_Text>();
-            if (label != null) label.text = pokeName;
+            // Safety check
+            if (txt == null) 
+            {
+                Debug.LogError($"Slot Button {i} is missing a TextMeshPro component!");
+                continue;
+            }
 
-            // Setup Click Event
-            Button btn = btnObj.GetComponent<Button>();
-            btn.onClick.AddListener(() => OnPokemonClicked(pokeName));
+            if (string.IsNullOrEmpty(PartyData[i]))
+            {
+                txt.text = $"Slot {i+1}\n(Empty)";
+            }
+            else
+            {
+                // [FIX] Use the exact string from array
+                txt.text = PartyData[i]; 
+            }
         }
     }
 
-    private void OnPokemonClicked(string name)
-    {
-        UserSelection = name;
-        Debug.Log($"Selected: {name}");
-        
-        // Update Main Menu Text
-        if (selectedPokemonText != null) 
-            selectedPokemonText.text = $"Selected: {name}";
+    // --- SEARCH & SELECTION ---
 
-        ClosePokedex();
+    private void OnSearchValueChanged(string query) { RefreshList(query); }
+
+    private void RefreshList(string searchFilter)
+    {
+        foreach (Transform child in listContent) Destroy(child.gameObject);
+        searchFilter = searchFilter.ToLower();
+        
+        List<string> filteredList = allPokemonNames
+            .Where(name => name.ToLower().Contains(searchFilter))
+            .ToList();
+
+        foreach (string pokeName in filteredList)
+        {
+            GameObject btnObj = Instantiate(pokemonButtonPrefab, listContent);
+            
+            // Set Text
+            TMP_Text label = btnObj.GetComponentInChildren<TMP_Text>();
+            if (label != null) label.text = pokeName;
+
+            // Set Button Click
+            Button btn = btnObj.GetComponent<Button>();
+            string capturedName = pokeName;
+            
+            btn.onClick.RemoveAllListeners();
+            btn.onClick.AddListener(() => OnPokemonSelected(capturedName));
+        }
+    }
+
+    private void OnPokemonSelected(string pokemonName)
+    {
+        Debug.Log($"[DEBUG] Selected: {pokemonName} for Slot {currentEditingSlotIndex}");
+
+        if (currentEditingSlotIndex != -1)
+        {
+            // [FIX] Ensure we write to the array
+            PartyData[currentEditingSlotIndex] = pokemonName;
+        }
+        else
+        {
+            Debug.LogError("Error: currentEditingSlotIndex was -1 when selecting pokemon!");
+        }
+
+        BackToPartyScreen(); 
     }
 }
