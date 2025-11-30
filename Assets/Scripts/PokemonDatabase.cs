@@ -2,23 +2,47 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.IO;
 using System;
-using System.Text.RegularExpressions; // [NEW] Needed for smart splitting
+using System.Text.RegularExpressions;
 
+/// <summary>
+/// Loads Pokemon data from CSV and stores them in a static dictionary.
+/// 
+/// SPRITE LOADING (Legacy approach - no longer used):
+/// - Originally attempted to load sprites via LoadSprites component
+/// - This approach had timing/dependency issues
+/// - Current implementation: BattleManager loads sprites directly using Resources.Load
+/// - Sprite files must be at: Assets/Resources/Sprites/{pokedexId}.png
+/// </summary>
 public class PokemonDatabase : MonoBehaviour
 {
     // Dictionary to store all loaded Pokemon by Name
     public static Dictionary<string, Pokemon> AllPokemon = new Dictionary<string, Pokemon>();
     public static bool IsLoaded = false;
+    private static LoadSprites spriteLoader; // [DEPRECATED] No longer used for sprite loading
 
     // Load data from Resources/pokemon.csv
     public static void LoadData()
     {
         if (IsLoaded) return;
 
+        // Find LoadSprites instance
+        if (spriteLoader == null)
+        {
+            spriteLoader = UnityEngine.Object.FindObjectOfType<LoadSprites>();
+            if (spriteLoader == null)
+            {
+                Debug.LogWarning("PokemonDatabase: No LoadSprites found in scene. Sprites will be null.");
+            }
+        }
+
         MoveLoader.LoadAllMoves();
 
-        // Load text file from Assets/Resources/pokemon.csv
-        TextAsset csvFile = Resources.Load<TextAsset>("pokemon");
+        // [SPRITE LOADING - DEPRECATED]
+        // This section attempts to load sprites during CSV parsing.
+        // However, BattleManager now loads sprites directly in UpdateBattleUI() for better reliability.
+        // This code remains for backward compatibility but is not actively used.
+        // Load text file from Assets/Resources/pokemon_with_sprites.csv
+        TextAsset csvFile = Resources.Load<TextAsset>("pokemon_with_sprites");
         if (csvFile == null)
         {
             Debug.LogError("CRITICAL: pokemon.csv not found in Resources folder!");
@@ -43,6 +67,7 @@ public class PokemonDatabase : MonoBehaviour
 
         int type1Index = Array.IndexOf(headers, "type1");
         int type2Index = Array.IndexOf(headers, "type2");
+        int spriteIndex = Array.IndexOf(headers, "sprite"); // [NEW] Find sprite column
 
         if (nameIndex == -1 || hpIndex == -1) 
         {
@@ -84,6 +109,26 @@ public class PokemonDatabase : MonoBehaviour
 
                 // [FIX] Pass 'id' as the FIRST argument now
                 Pokemon p = new Pokemon(id, name, types, hp, atk, def, spAtk, spDef, speed);
+                
+                // Load sprite using CSV sprite column
+                if (spriteLoader != null && spriteIndex != -1 && !string.IsNullOrEmpty(data[spriteIndex]))
+                {
+                    string spritePath = data[spriteIndex];
+                    p.sprite = spriteLoader.LoadSpriteFromCsvField(spritePath);
+                    if (p.sprite != null)
+                    {
+                        Debug.Log($"Loaded sprite for {name} from path: {spritePath}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"Failed to load sprite for {name} from path: {spritePath}");
+                    }
+                }
+                else if (spriteLoader != null && id > 0)
+                {
+                    // Fallback: use pokedex number if sprite column missing
+                    p.sprite = spriteLoader.LoadSpriteByNumber(id);
+                }
                 
                 // --- NEW: Parse Resistance Columns Automatically ---
                 // The CSV has columns like "against_bug", "against_dark"
@@ -164,11 +209,11 @@ public class PokemonDatabase : MonoBehaviour
         {
             Pokemon original = AllPokemon[name];
             // [FIX] Added 'original.pokedexId' as the first argument
-            return new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed) 
-            { 
-                moves = new List<string>(original.moves),
-                typeMultipliers = new Dictionary<string, float>(original.typeMultipliers) // Copy dictionary too!
-            };
+            Pokemon copy = new Pokemon(original.pokedexId, original.name, original.types, original.hp, original.attack, original.defense, original.spAttack, original.spDefense, original.speed);
+            copy.sprite = original.sprite; // Copy sprite reference
+            copy.moves = new List<string>(original.moves);
+            copy.typeMultipliers = new Dictionary<string, float>(original.typeMultipliers); // Copy dictionary too!
+            return copy;
         }
         
         Debug.LogError($"Pokemon '{name}' not found! Did you spell it correctly in BattleManager?");

@@ -179,11 +179,53 @@ public class BattleManager : MonoBehaviour
 
     void UpdateBattleUI()
     {
+        // Update player stats and name
         if (playerNameText != null) playerNameText.text = myPokemon.name;
-        if (playerHpBar != null) { playerHpBar.maxValue = myPokemon.maxHp; playerHpBar.value = myPokemon.hp; }
+        if (playerHpBar != null) 
+        { 
+            playerHpBar.maxValue = myPokemon.maxHp; 
+            playerHpBar.value = myPokemon.hp; 
+        }
+        
+        // Load and display player sprite
+        // Sprites are loaded from Resources/Sprites/{pokedexId}.png
+        // Color is set to white to remove any tint from the UI Image component
+        if (playerImage != null)
+        {
+            playerImage.color = Color.white;
+            Sprite sprite = Resources.Load<Sprite>($"Sprites/{myPokemon.pokedexId}");
+            if (sprite != null)
+            {
+                playerImage.sprite = sprite;
+            }
+            else
+            {
+                Debug.LogWarning($"Sprite not found for {myPokemon.name} at path: Sprites/{myPokemon.pokedexId}");
+            }
+        }
 
+        // Update enemy stats and name
         if (enemyNameText != null) enemyNameText.text = enemyPokemon.name;
-        if (enemyHpBar != null) { enemyHpBar.maxValue = enemyPokemon.maxHp; enemyHpBar.value = enemyPokemon.hp; }
+        if (enemyHpBar != null) 
+        { 
+            enemyHpBar.maxValue = enemyPokemon.maxHp; 
+            enemyHpBar.value = enemyPokemon.hp; 
+        }
+        
+        // Load and display enemy sprite
+        if (enemyImage != null)
+        {
+            enemyImage.color = Color.white;
+            Sprite sprite = Resources.Load<Sprite>($"Sprites/{enemyPokemon.pokedexId}");
+            if (sprite != null)
+            {
+                enemyImage.sprite = sprite;
+            }
+            else
+            {
+                Debug.LogWarning($"Sprite not found for {enemyPokemon.name} at path: Sprites/{enemyPokemon.pokedexId}");
+            }
+        }
         
         for (int i = 0; i < moveButtons.Length; i++)
         {

@@ -18,6 +18,16 @@ public class Pokemon
     public int spAttack;
     public int spDefense;
     public int speed;
+    public List<string> moves;
+    
+    // [SPRITE FIELD - DEPRECATED]
+    // Originally used to cache sprites loaded during CSV parsing.
+    // Current approach: BattleManager loads sprites on-demand using Resources.Load in UpdateBattleUI()
+    // This field may be null and is no longer actively used.
+    public Sprite sprite;
+
+    // [NEW] Stores effectiveness data from CSV (e.g., "fire": 2.0)
+    public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>(); 
     
     public List<string> types = new List<string>();
     public List<string> moves = new List<string>();
