@@ -232,6 +232,7 @@ public class UDPChatManager : MonoBehaviour
             if (battleManager != null && !isBattleSetup) 
             {
                 isBattleSetup = true;
+                battleManager.SetWaitingMode(false); //Challenger is here, hide waiting panel
                 battleManager.SetupBattle(true);
             }
         }
@@ -402,6 +403,7 @@ public class UDPChatManager : MonoBehaviour
             if (battleManager != null)
             {
                 battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax);
+                battleManager.SetWaitingMode(false);// battle happening, remove gray screen
             }
         }
     }

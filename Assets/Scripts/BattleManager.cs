@@ -6,7 +6,7 @@ using System.Collections.Generic;
 public class BattleManager : MonoBehaviour
 {
     public UDPChatManager networkManager; 
-
+    
     [Header("UI Menus")]
     public GameObject actionMenu; // Fight, Bag, Pokemon, Run buttons
     public GameObject movesPanel; // Panel for the 4 moves
@@ -19,6 +19,9 @@ public class BattleManager : MonoBehaviour
     public Button btnRun;
     public Button btnBack; // Back button for sub-menus
     public Button btnPartyBack;
+
+    [Header("Waiting Screen")]
+    public GameObject panelWaiting;
 
     [Header("Bag UI")]
     public GameObject bagPanel;      // Assign the BagPanel object
@@ -179,6 +182,25 @@ public class BattleManager : MonoBehaviour
         // Setup enemy
         enemyPokemon = PokemonDatabase.GetPokemon("Bulbasaur"); // Dummy for now
 
+        if (isHost)
+        {
+            // if enemy name default or empty, show waiting panel
+            if (string.IsNullOrEmpty(enemyUsername) || enemyUsername == "Opponent")
+            {
+                SetWaitingMode(true);
+            }
+            else
+            {
+                // If handshake pass, hide waiting panel
+                SetWaitingMode(false);
+            }
+        }
+        else
+        {
+            // If joiner or spectator, hide black screen
+            SetWaitingMode(false);
+        }
+
         // Update UI and network
         UpdateBattleUI();
         
@@ -189,6 +211,14 @@ public class BattleManager : MonoBehaviour
         BroadcastLog($"{myUsername} sent out {myPokemon.name}!");
 
         SetButtonsInteractable(true);
+    }
+
+    public void SetWaitingMode(bool isWaiting)
+    {
+        if (panelWaiting != null)
+        {
+            panelWaiting.SetActive(isWaiting);
+        }
     }
 
     /*
