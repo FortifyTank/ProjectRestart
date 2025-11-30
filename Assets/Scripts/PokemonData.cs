@@ -2,11 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+// (If you have GameConstants.cs, keep Enums there. If not, uncomment them here.)
+/* public enum StatusCondition { None, Paralysis, Sleep, Freeze, Burn, Poison }
+   public enum StatID { HP=1, Attack=2, Defense=3, ... } */
+
 [System.Serializable]
-public class Pokemon
+public class Pokemon 
 {
     public string name;
-    public List<string> types;
+    public int pokedexId; 
     public int hp;
     public int maxHp;
     public int attack;
@@ -14,82 +18,47 @@ public class Pokemon
     public int spAttack;
     public int spDefense;
     public int speed;
-    public List<string> moves;
+    
+    // [SPRITE FIELD - DEPRECATED]
+    // Originally used to cache sprites loaded during CSV parsing.
+    // Current approach: BattleManager loads sprites on-demand using Resources.Load in UpdateBattleUI()
+    // This field may be null and is no longer actively used.
+    public Sprite sprite;
 
     // [NEW] Stores effectiveness data from CSV (e.g., "fire": 2.0)
     public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>(); 
     
-    public Pokemon(string name, List<string> types, int hp, int atk, int def, int spAtk, int spDef, int spd)
+    public List<string> types = new List<string>();
+    public List<string> moves = new List<string>();
+
+    // Stats & Status
+    public int stageAtk = 0;
+    public int stageDef = 0;
+    public int stageSpAtk = 0;
+    public int stageSpDef = 0;
+    public int stageSpeed = 0;
+    public StatusCondition status = StatusCondition.None;
+    public int sleepTurns = 0; 
+
+    // --- FIXED CONSTRUCTOR ---
+    // Now accepts List<string> _types instead of string _type
+    public Pokemon(int id, string _name, List<string> _types, int _hp, int _atk, int _def, int _spAtk, int _spDef, int _spd)
     {
-        this.name = name;
-        this.types = types;
-        this.hp = hp;
-        this.maxHp = hp;
-        this.attack = atk;
-        this.defense = def;
-        this.spAttack = spAtk;
-        this.spDefense = spDef;
-        this.speed = spd;
-        this.moves = new List<string>();
+        pokedexId = id;
+        name = _name;
+        types = _types; // Assign the list directly!
+        maxHp = _hp;
+        hp = _hp;
+        attack = _atk;
+        defense = _def;
+        spAttack = _spAtk;
+        spDefense = _spDef;
+        speed = _spd;
     }
-}
 
-public class MoveData
-{
-    public string type;
-    public string category; 
-    public int power;
-
-    public MoveData(string t, string c, int p)
-    {
-        type = t;
-        category = c;
-        power = p;
-    }
-}
-
-public class MoveDatabase
-{
-    public static Dictionary<string, MoveData> Moves = new Dictionary<string, MoveData>()
-    {
-        { "Tackle", new MoveData("Normal", "Physical", 40) },
-        { "Slash", new MoveData("Normal", "Physical", 70) },
-        { "Flamethrower", new MoveData("Fire", "Special", 90) },
-        { "Fire Spin", new MoveData("Fire", "Special", 35) },
-        { "Ember", new MoveData("Fire", "Special", 40) },
-        { "Hydro Pump", new MoveData("Water", "Special", 110) },
-        { "Water Gun", new MoveData("Water", "Special", 40) },
-        { "Bubble", new MoveData("Water", "Special", 40) },
-        { "Vine Whip", new MoveData("Grass", "Physical", 45) },
-        { "Solar Beam", new MoveData("Grass", "Special", 120) },
-        { "Razor Leaf", new MoveData("Grass", "Physical", 55) },
-        { "Wing Attack", new MoveData("Flying", "Physical", 60) },
-        { "Peck", new MoveData("Flying", "Physical", 35) },
-        { "Bite", new MoveData("Dark", "Physical", 60) },
-        { "Crunch", new MoveData("Dark", "Physical", 80) },
-        // Add more moves here if needed
-    };
-
-    // Helper to auto-assign moves when loading from CSV
-    public static List<string> GetMovesForType(string type)
-    {
-        List<string> learnedMoves = new List<string>();
-        
-        // Default move
-        learnedMoves.Add("Tackle");
-
-        foreach (var move in Moves)
-        {
-            if (move.Value.type.Equals(type, System.StringComparison.OrdinalIgnoreCase))
-            {
-                if (!learnedMoves.Contains(move.Key))
-                {
-                    learnedMoves.Add(move.Key);
-                }
-                
-                if (learnedMoves.Count >= 4) break;
-            }
-        }
-        return learnedMoves;
-    }
+    // Constructor Overload for backward compatibility (just in case)
+    public Pokemon() {}
+    
+    public void ResetStages() { stageAtk = 0; stageDef = 0; stageSpAtk = 0; stageSpDef = 0; stageSpeed = 0; }
+    public void HealStatus() { status = StatusCondition.None; sleepTurns = 0; }
 }

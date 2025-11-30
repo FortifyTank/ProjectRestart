@@ -48,7 +48,7 @@ public class UDPChatManager : MonoBehaviour
     private bool isAppRunning = true;
     
     private float broadcastTimer = 0f;
-    private bool isHosting = false;
+    public bool isHosting = false;
     private string myUsername = "Player";
     private string targetIP = "";
     private int targetPort = 8000; 
@@ -177,6 +177,13 @@ public class UDPChatManager : MonoBehaviour
             string joinerName = ParseValue(rawData, "username");
             if (string.IsNullOrEmpty(joinerName)) joinerName = "Unknown Player";
 
+            // [FIX] Store the name!
+            if (battleManager != null) 
+            {
+                battleManager.enemyUsername = joinerName;
+                battleManager.myUsername = myUsername;
+            }
+
             if (!isBattleSetup)
             {
                 AddChatMessage("System", $"{joinerName} Connected! Sending Handshake Response...");
@@ -191,7 +198,17 @@ public class UDPChatManager : MonoBehaviour
             }
         }
         else if (type == "HANDSHAKE_RESPONSE")
-        {
+        {   
+            string hostName = ParseValue(rawData, "username"); // [NEW] Parse Host Name
+            if (string.IsNullOrEmpty(hostName)) hostName = "Host";
+
+            // [FIX] Store the name!
+            if (battleManager != null) 
+            {
+                battleManager.enemyUsername = hostName;
+                battleManager.myUsername = myUsername;
+            }
+
             string seed = ParseValue(rawData, "seed");
             
             if (!isBattleSetup)
@@ -212,12 +229,10 @@ public class UDPChatManager : MonoBehaviour
                     if (battleManager.GetMyPokemonName() == "Unknown" || battleManager.GetMyPokemonName() == "Bulbasaur")
                     {
                         battleManager.SetMyPokemon(pokeName); 
-                        AddChatMessage("System", $"Host is using {pokeName}");
                     }
                     else
                     {
                         battleManager.SetOpponentPokemon(pokeName);
-                        AddChatMessage("System", $"Player 2 is using {pokeName}");
                     }
                 }
                 else
@@ -225,37 +240,131 @@ public class UDPChatManager : MonoBehaviour
                     if (battleManager.GetEnemyPokemonName() != pokeName)
                     {
                         battleManager.SetOpponentPokemon(pokeName);
-                        AddChatMessage("System", $"Opponent chose {pokeName}");
                     }
                 }
+                battleManager.OnEnemySwitch(pokeName);
+            }
+        }
+        else if (type == "COMMIT_TURN")
+        {
+            // 1. Parse Data
+            string move = ParseValue(rawData, "move_name");
+            int speed = int.Parse(ParseValue(rawData, "speed"));
+            bool isSwitch = bool.Parse(ParseValue(rawData, "is_switch"));
+
+            int tieBreaker = 0;
+            string tbStr = ParseValue(rawData, "tie_breaker");
+            if (!string.IsNullOrEmpty(tbStr)) tieBreaker = int.Parse(tbStr);
+
+            // 2. Tell BattleManager
+            if (battleManager != null)
+            {
+                battleManager.enemyPendingMove = move;
+                battleManager.enemyPendingSpeed = speed;
+                battleManager.isEnemyActionSwitch = isSwitch;
+                battleManager.enemyTieBreaker = tieBreaker; // [NEW] Save it
+                battleManager.hasEnemyCommitted = true;
+                
+                // 3. Try to Resolve
+                battleManager.CheckForResolution();
+            }
+        }
+        // Inside HandleBattleMessage (Add this block)
+        else if (type == "TURN_END")
+        {
+            // The opponent confirms they have finished their action and the turn is over.
+            if (battleManager != null)
+            {
+                battleManager.ForceUnlockAndResetTurn();
             }
         }
         else if (type == "ATTACK_ANNOUNCE")
         {
-            string move = ParseValue(rawData, "move_name");
-            if (battleManager != null) battleManager.OnOpponentAttackAnnounce(move);
+            // WRAP START
+            if (!isSpectator) 
+            {
+                string move = ParseValue(rawData, "move_name");
+                if (battleManager != null) battleManager.OnOpponentAttackAnnounce(move);
+            }
+            // WRAP END
         }
         else if (type == "DEFENSE_ANNOUNCE")
         {
-            if (battleManager != null) battleManager.OnDefenseAnnounceReceived();
+            // WRAP START
+            if (!isSpectator)
+            {
+                if (battleManager != null) battleManager.OnDefenseAnnounceReceived();
+            }
+            // WRAP END
         }
         else if (type == "CALCULATION_REPORT")
         {
+            // [CRITICAL FIX] REMOVED "if (!isSpectator)"
+            // Spectators MUST run this now, because the logic is inside BattleManager!
+
             string attackerName = ParseValue(rawData, "attacker"); 
             int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
             int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-            if (battleManager != null) battleManager.OnCalculationReport(attackerName, dmg, hp);
+            
+            // [NEW] Parse the 'is_host' boolean
+            // We use TryParse to be safe (defaults to false if missing)
+            string isHostStr = ParseValue(rawData, "is_host");
+            bool isHost = false;
+            if (!string.IsNullOrEmpty(isHostStr)) bool.TryParse(isHostStr, out isHost);
+
+            string atkStr = ParseValue(rawData, "atk_stage");
+            string defStr = ParseValue(rawData, "def_stage");
+            int rAtk = string.IsNullOrEmpty(atkStr) ? 0 : int.Parse(atkStr);
+            int rDef = string.IsNullOrEmpty(defStr) ? 0 : int.Parse(defStr);
+
+            if (battleManager != null) 
+            {
+                // Pass the new ints to the function
+                battleManager.OnCalculationReport(attackerName, dmg, hp, isHost, rAtk, rDef);
+            }
+        }
+        else if (type == "CALCULATION_CONFIRM") // 
+        {
+            // RFC Section 5.2: "turn order reverses, returning to WAITING_FOR_MOVE"
+            if (battleManager != null) 
+            {
+                battleManager.OnCalculationConfirm();
+            }
         }
         else if (type == "RESOLUTION_REQUEST")
         {
+            // Parse the values from the packet
             int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
             int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
-            if (battleManager != null) battleManager.OnResolutionRequest(dmg, hp);
+            
+            // Pass to BattleManager
+            if (battleManager != null) 
+            {
+                battleManager.OnResolutionRequest(dmg, hp);
+            }
         }
         else if (type == "GAME_OVER")
         {
             string winner = ParseValue(rawData, "winner");
             if (battleManager != null) battleManager.OnGameOver(winner);
+        }
+        else if (type == "SPECTATOR_SYNC")
+        {
+            // 1. Parse the Host's State
+            string hName = ParseValue(rawData, "host_mon");
+            int hHp = int.Parse(ParseValue(rawData, "host_hp"));
+            int hMax = int.Parse(ParseValue(rawData, "host_max"));
+            
+            // 2. Parse the Client's State
+            string cName = ParseValue(rawData, "client_mon");
+            int cHp = int.Parse(ParseValue(rawData, "client_hp"));
+            int cMax = int.Parse(ParseValue(rawData, "client_max"));
+
+            // 3. Force the UI to match
+            if (battleManager != null)
+            {
+                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax);
+            }
         }
     }
 
@@ -271,9 +380,11 @@ public class UDPChatManager : MonoBehaviour
 
     public void SendHandshakeResponse()
     {
+        // [FIX] Added 'username' so the Joiner knows my name!
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
-                         $"sequence_number: {GetNextSeq()}";
+                        $"username: {myUsername}\n" + 
+                        $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
+                        $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
     }
 
@@ -292,8 +403,7 @@ public class UDPChatManager : MonoBehaviour
         string payload = $"message_type: ATTACK_ANNOUNCE\n" +
                          $"move_name: {moveName}\n" +
                          $"sequence_number: {GetNextSeq()}";
-        SendReliablePacket(payload);
-        AddChatMessage("System", $"You used {moveName}!");
+        SendReliablePacket(payload);;
     }
 
     public void SendDefenseAnnounce()
@@ -303,16 +413,20 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    public void SendCalculationReport(string attackerName, string moveUsed, int damage, int hpLeft, int attackerHpLeft) 
+    public void SendCalculationReport(string attacker, string move, int dmg, int defHp, int attHp, bool isHost, int relevantAtkStage, int relevantDefStage)
     {
         string payload = $"message_type: CALCULATION_REPORT\n" +
-                         $"attacker: {attackerName}\n" +
-                         $"move_used: {moveUsed}\n" +
-                         $"remaining_health: {attackerHpLeft}\n" +
-                         $"damage_dealt: {damage}\n" +
-                         $"defender_hp_remaining: {hpLeft}\n" +
-                         $"status_message: Effective\n" +
-                         $"sequence_number: {GetNextSeq()}";
+                        $"attacker: {attacker}\n" +
+                        $"move_name: {move}\n" +
+                        $"damage_dealt: {dmg}\n" +
+                        $"defender_hp_remaining: {defHp}\n" +
+                        $"attacker_hp_remaining: {attHp}\n" +
+                        $"is_host: {isHost}\n" + 
+                        // These are the stages actually used in the math
+                        $"atk_stage: {relevantAtkStage}\n" + 
+                        $"def_stage: {relevantDefStage}\n" + 
+                        $"sequence_number: {GetNextSeq()}";
+
         SendReliablePacket(payload);
     }
 
@@ -364,6 +478,17 @@ public class UDPChatManager : MonoBehaviour
                          $"sequence_number: {GetNextSeq()}";
         SendReliablePacket(payload);
         chatQueue.Enqueue($"TEXT_CMD|System|{messageText}"); 
+    }
+
+    public void SendSystemMessagePacket(string text)
+    {
+        // Sends a chat message labeled as "System" to everyone
+        string payload = $"message_type: CHAT_MESSAGE\n" +
+                         $"sender_name: System\n" +
+                         $"content_type: TEXT\n" +
+                         $"message_text: {text}\n" +
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
     }
 
     public void SendStickerMessage(string base64Data)
@@ -431,10 +556,9 @@ public class UDPChatManager : MonoBehaviour
     private void SendHandshakeResponseTo(IPEndPoint target)
     {
         string payload = $"message_type: HANDSHAKE_RESPONSE\n" +
-                         $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
-                         $"sequence_number: {GetNextSeq()}";
-        
-        // Handshakes to spectators should also be reliable to ensure they connect
+                        $"username: {myUsername}\n" + // [FIX] Added username
+                        $"seed: {UnityEngine.Random.Range(1000, 9999)}\n" +
+                        $"sequence_number: {GetNextSeq()}";
         AddToPending(GetNextSeq(), payload, target);
     }
 
@@ -536,16 +660,10 @@ public class UDPChatManager : MonoBehaviour
                         SendHandshakeResponseTo(remoteEP);
 
                         if (battleManager != null)
-                        {
-                            string p1 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {battleManager.GetMyPokemonName()}\nsequence_number: {GetNextSeq()}";
-                            AddToPending(GetNextSeq(), p1, remoteEP); // Reliable Setup
-
-                            string enemyName = battleManager.GetEnemyPokemonName();
-                            if (enemyName != "Unknown")
-                            {
-                                string p2 = $"message_type: BATTLE_SETUP\ncommunication_mode: P2P\npokemon_name: {enemyName}\nsequence_number: {GetNextSeq()}";
-                                AddToPending(GetNextSeq(), p2, remoteEP); // Reliable Setup
-                            }
+                        {   
+                            // This SYNC function now handles loading the sprites AND setting the correct HP.
+                            // We do NOT need to send BATTLE_SETUP anymore.
+                            battleManager.SendSpectatorUpdate();
                         }
                     }
                     continue;
@@ -580,6 +698,7 @@ public class UDPChatManager : MonoBehaviour
         panelChat.SetActive(true);
         SendHandshakeRequest();
         AddChatMessage("System", $"Sent Handshake to {ip}...");
+        if(statusText != null) statusText.text = "Joining...";
     }
     
     public void OnClick_Send()
@@ -803,4 +922,45 @@ public class UDPChatManager : MonoBehaviour
             }
         }
     }
+
+    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
+    {
+        string payload = $"message_type: SPECTATOR_SYNC\n" +
+                        $"host_mon: {hName}\n" +
+                        $"host_hp: {hHp}\n" +
+                        $"host_max: {hMax}\n" +
+                        $"client_mon: {cName}\n" +
+                        $"client_hp: {cHp}\n" +
+                        $"client_max: {cMax}\n" +
+                        $"sequence_number: {GetNextSeq()}";
+                        
+        // Send to all spectators
+        foreach(var spec in spectators)
+        {
+            SendRawBytes(Encoding.UTF8.GetBytes(payload), spec);
+        }
+    }
+
+    public void SendCommitPacket(string move, int speed, bool isSwitch, int tieBreaker)
+    {
+        string payload = $"message_type: COMMIT_TURN\n" +
+                         $"move_name: {move}\n" +
+                         $"speed: {speed}\n" +
+                         $"is_switch: {isSwitch}\n" +
+                         $"tie_breaker: {tieBreaker}\n" + // [NEW]
+                         $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+    }
+
+    // Inside UDPChatManager.cs
+
+    // New Sending Function
+    public void SendTurnEndPacket()
+    {
+        string payload = $"message_type: TURN_END\n" +
+                        $"sequence_number: {GetNextSeq()}";
+        SendReliablePacket(payload);
+    }
+
+    
 }
