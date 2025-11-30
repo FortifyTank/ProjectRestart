@@ -46,7 +46,7 @@ public class UDPChatManager : MonoBehaviour
     public List<IPEndPoint> spectators = new List<IPEndPoint>();
 
     private const float RETRY_INTERVAL = 0.5f; 
-    private const int MAX_RETRIES = 5;
+    private const int MAX_RETRIES = 3;
 
     private UdpClient chatClient;
     private UdpClient broadcastClient;
@@ -64,7 +64,8 @@ public class UDPChatManager : MonoBehaviour
 
     private ConcurrentQueue<string> chatQueue = new ConcurrentQueue<string>();
     private ConcurrentQueue<string> foundRoomsQueue = new ConcurrentQueue<string>();
-    private List<string> knownRooms = new List<string>();
+    private Dictionary<string, GameObject> activeRoomButtons = new Dictionary<string, GameObject>();
+    private Dictionary<string, string> activeRoomStatuses = new Dictionary<string, string>();
     private ConcurrentQueue<string> battleEventQueue = new ConcurrentQueue<string>(); 
     private object socketLock = new object();
 
@@ -175,12 +176,22 @@ public class UDPChatManager : MonoBehaviour
             }
         }
 
-        while (foundRoomsQueue.TryDequeue(out string roomIP))
+        while (foundRoomsQueue.TryDequeue(out string rawEntry))
         {
-            if (!knownRooms.Contains(roomIP))
+            string[] parts = rawEntry.Split('|');
+            string ip = parts[0];
+            string hostName = (parts.Length > 1) ? parts[1] : "Unknown";
+            string status = (parts.Length > 2) ? parts[2] : "OPEN";
+
+            // CASE A: It's a brand new room we haven't seen yet
+            if (!activeRoomButtons.ContainsKey(ip))
             {
-                knownRooms.Add(roomIP);
-                CreateRoomButton(roomIP);
+                CreateRoomButton(ip, hostName, status);
+            }
+            // CASE B: We know this room, BUT the status has changed (e.g. was OPEN, now FULL)
+            else if (activeRoomStatuses.ContainsKey(ip) && activeRoomStatuses[ip] != status)
+            {
+                UpdateRoomButtonVisuals(ip, status); // Call the helper function to update UI
             }
         }
         
@@ -838,13 +849,20 @@ public class UDPChatManager : MonoBehaviour
     /*
     Broadcast a simple ROOM announcement so joiners can discover the host.
     */
+    // Replace your existing BroadcastPresence method
     private void BroadcastPresence()
     {
         try
         {
             UdpClient broadcaster = new UdpClient();
             broadcaster.EnableBroadcast = true;
-            string payload = $"ROOM:{myUsername}";
+
+            // LOGIC: If we have a targetIP, we are in battle.
+            string status = string.IsNullOrEmpty(targetIP) ? "OPEN" : "FULL";
+
+            // Send: ROOM:Name:Status
+            string payload = $"ROOM:{myUsername}:{status}";
+            
             byte[] bytes = Encoding.UTF8.GetBytes(payload);
             broadcaster.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, broadcastPort));
             broadcaster.Close();
@@ -871,8 +889,23 @@ public class UDPChatManager : MonoBehaviour
                 {
                     byte[] data = broadcastClient.Receive(ref remoteEP);
                     string message = Encoding.UTF8.GetString(data);
+                    
+                    // CHANGE STARTS HERE
                     if (message.StartsWith("ROOM:") && !isHosting)
-                        foundRoomsQueue.Enqueue(remoteEP.Address.ToString());
+                    {
+                        // Format is "ROOM:Name:Status"
+                        string[] parts = message.Split(':');
+                        
+                        // Safety check on array length
+                        string hostName = (parts.Length > 1) ? parts[1] : "Unknown";
+                        string status = (parts.Length > 2) ? parts[2] : "OPEN"; // Default to OPEN
+                        
+                        string ip = remoteEP.Address.ToString();
+
+                        // Queue: IP | Name | Status
+                        foundRoomsQueue.Enqueue($"{ip}|{hostName}|{status}");
+                    }
+                    // CHANGE ENDS HERE
                 }
             }
             catch (System.Exception) { }
@@ -884,15 +917,76 @@ public class UDPChatManager : MonoBehaviour
     /*
     Spawn a “Join {ip}” button in the room list and wire it up.
     */
-    private void CreateRoomButton(string ip)
+    // Update the signature to accept hostName
+    // Update the signature to accept 'status'
+    private void CreateRoomButton(string ip, string hostName, string status)
     {
         if(roomButtonPrefab == null || roomListContent == null) return;
-        GameObject btn = Instantiate(roomButtonPrefab, roomListContent);
-        var legacyText = btn.GetComponentInChildren<Text>();
-        if(legacyText != null) legacyText.text = $"Join {ip}";
-        var tmpText = btn.GetComponentInChildren<TMP_Text>();
-        if(tmpText != null) tmpText.text = $"Join {ip}";
-        btn.GetComponent<Button>().onClick.AddListener(() => JoinGame(ip));
+        
+        GameObject roomObj = Instantiate(roomButtonPrefab, roomListContent);
+
+        // 1. REGISTER THE BUTTON (So we can find it later!)
+        if (activeRoomButtons.ContainsKey(ip)) activeRoomButtons.Remove(ip);
+        activeRoomButtons.Add(ip, roomObj);
+
+        if (activeRoomStatuses.ContainsKey(ip)) activeRoomStatuses.Remove(ip);
+        activeRoomStatuses.Add(ip, status);
+
+        // 2. Set Name
+        TMP_Text nameLabel = null;
+        Transform textTrans = roomObj.transform.Find("UsernameText"); 
+        if (textTrans != null) nameLabel = textTrans.GetComponent<TMP_Text>();
+        if (nameLabel != null) nameLabel.text = $"Hoster: {hostName}";
+
+        // 3. Set Visuals (Use the helper function so we don't duplicate code)
+        UpdateRoomButtonVisuals(ip, status);
+    }
+
+    private void UpdateRoomButtonVisuals(string ip, string status)
+    {
+        // Safety check: do we actually have a button for this IP?
+        if (!activeRoomButtons.ContainsKey(ip)) return;
+
+        GameObject roomObj = activeRoomButtons[ip];
+        activeRoomStatuses[ip] = status; // Update our memory of the status
+
+        // 1. GET REFERENCES
+        Button joinBtn = null;
+        Transform joinTrans = roomObj.transform.Find("JoinButton");
+        if (joinTrans != null) joinBtn = joinTrans.GetComponent<Button>();
+
+        Button specBtn = null;
+        Transform specTrans = roomObj.transform.Find("SpectateButton");
+        if (specTrans != null) specBtn = specTrans.GetComponent<Button>();
+
+        // 2. UPDATE JOIN BUTTON
+        if (joinBtn != null)
+        {
+            // Clear old clicks so we don't stack them
+            joinBtn.onClick.RemoveAllListeners(); 
+
+            TMP_Text joinLabel = joinBtn.GetComponentInChildren<TMP_Text>();
+
+            if (status == "FULL")
+            {
+                joinBtn.interactable = false; // Disable click
+                if (joinLabel != null) joinLabel.text = "(IN BATTLE)";
+            }
+            else
+            {
+                joinBtn.interactable = true; // Enable click
+                if (joinLabel != null) joinLabel.text = "JOIN";
+                joinBtn.onClick.AddListener(() => JoinGame(ip));
+            }
+        }
+
+        // 3. UPDATE SPECTATE BUTTON
+        if (specBtn != null)
+        {
+            specBtn.onClick.RemoveAllListeners();
+            specBtn.interactable = true; // Always clickable
+            specBtn.onClick.AddListener(() => JoinAsSpectator(ip));
+        }
     }
 
     /*

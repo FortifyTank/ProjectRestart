@@ -1691,7 +1691,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 149783079}
   m_HandleRect: {fileID: 149783078}
   m_Direction: 0
-  m_Value: 0
+  m_Value: 1
   m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -3631,7 +3631,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 557527962}
   m_Direction: 2
   m_Value: 1
-  m_Size: 1
+  m_Size: 0.99998844
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -9811,7 +9811,7 @@ MonoBehaviour:
   panelChat: {fileID: 684165187}
   inputUsername: {fileID: 1613617020}
   roomListContent: {fileID: 2006775327}
-  roomButtonPrefab: {fileID: 8527794084685592627, guid: 759af558a4d8479418714c06e56a8933, type: 3}
+  roomButtonPrefab: {fileID: 338457637078207869, guid: 49761180733c7ec49927e4517113491b, type: 3}
   statusText: {fileID: 1054705961}
   inputMessage: {fileID: 1357937401}
   chatContent: {fileID: 1544277058}
@@ -17123,8 +17123,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0.0000038146973, y: -0.00011972121}
-  m_SizeDelta: {x: 0, y: 300}
+  m_AnchoredPosition: {x: -0.00005722, y: 0.0000061596643}
+  m_SizeDelta: {x: 0, y: 407.04}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &2006775328
 MonoBehaviour:
@@ -17162,8 +17162,8 @@ MonoBehaviour:
   m_ChildForceExpandWidth: 1
   m_ChildForceExpandHeight: 0
   m_ChildControlWidth: 1
-  m_ChildControlHeight: 1
-  m_ChildScaleWidth: 1
+  m_ChildControlHeight: 0
+  m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
 --- !u!1 &2014123208
