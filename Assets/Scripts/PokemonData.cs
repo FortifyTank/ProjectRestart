@@ -18,7 +18,6 @@ public class Pokemon
     public int spAttack;
     public int spDefense;
     public int speed;
-    public List<string> moves;
     
     // [SPRITE FIELD - DEPRECATED]
     // Originally used to cache sprites loaded during CSV parsing.
@@ -31,9 +30,6 @@ public class Pokemon
     
     public List<string> types = new List<string>();
     public List<string> moves = new List<string>();
-    
-    // Dictionary for Type Effectiveness (e.g. "Fire" -> 2.0)
-    public Dictionary<string, float> typeMultipliers = new Dictionary<string, float>();
 
     // Stats & Status
     public int stageAtk = 0;
