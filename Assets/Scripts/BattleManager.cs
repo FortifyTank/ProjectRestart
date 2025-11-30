@@ -24,6 +24,16 @@ public class BattleManager : MonoBehaviour
     [Header("Waiting Screen")]
     public GameObject panelWaiting;
 
+    [Header("Stats UI")]
+    public GameObject panelStats; // Panel for stats
+    public Button btnShowStats;  
+    public Button btnCloseStats;
+
+    // Txt for ME
+    public TMPro.TMP_Text txtMyAtk, txtMyDef, txtMySpAtk, txtMySpDef, txtMySpd;
+    // Txt for ENEMY
+    public TMPro.TMP_Text txtEnAtk, txtEnDef, txtEnSpAtk, txtEnSpDef, txtEnSpd;
+
     [Header("End Game UI")]
     public GameObject btnReturnToLobby;
 
@@ -241,7 +251,7 @@ public class BattleManager : MonoBehaviour
     void UpdateBattleUI()
     {
         // Update player stats and name
-        if (playerNameText != null) playerNameText.text = myPokemon.name;
+        if (playerNameText != null) playerNameText.text = myUsername + $" ({myPokemon.name})";
         if (playerHpBar != null) 
         { 
             playerHpBar.maxValue = myPokemon.maxHp; 
@@ -266,7 +276,7 @@ public class BattleManager : MonoBehaviour
         }
 
         // Update enemy stats and name
-        if (enemyNameText != null) enemyNameText.text = enemyPokemon.name;
+        if (enemyNameText != null) enemyNameText.text = enemyUsername + $" ({enemyPokemon.name})";
         if (enemyHpBar != null) 
         { 
             enemyHpBar.maxValue = enemyPokemon.maxHp; 
@@ -504,8 +514,8 @@ public class BattleManager : MonoBehaviour
             }
             else
             {
-                if (networkManager != null) networkManager.SendGameOver(enemyPokemon.name);
-                OnGameOver(enemyPokemon.name);
+                if (networkManager != null) networkManager.SendGameOver(enemyUsername);
+                OnGameOver(enemyUsername);
             }
         }
         else
@@ -610,26 +620,39 @@ public class BattleManager : MonoBehaviour
         isGameOver = true;
         SetButtonsInteractable(false);
         
+        // clean names
+        string cleanWinner = winner.Trim();
+        string cleanMe = myUsername.Trim();
+        string cleanEnemy = enemyUsername.Trim();
+
+        Debug.Log($"[GAME OVER] Winner: '{cleanWinner}' | Me: '{cleanMe}' | Enemy: '{cleanEnemy}'");
+
         // Print to Chat (Crucial for Spectators)
         networkManager.AddChatMessage("System", $"GAME OVER! Winner: {winner}");
+
+        // Update Top Labels , NOTE TO SELF: MIGHT NEED TO CHANGE THIS 
+        if (playerNameText != null) 
+    {
+        // Check if I won
+            if (cleanWinner == cleanMe) 
+                playerNameText.text += " <color=green>(WINNER)</color>";
+            else 
+                playerNameText.text += " <color=red>(FAINTED)</color>";
+        }
+        
+        if (enemyNameText != null) 
+        {
+            // Check if Enemy Won
+            if (cleanWinner == cleanEnemy) 
+                enemyNameText.text += " <color=green>(WINNER)</color>";
+            else 
+                enemyNameText.text += " <color=red>(FAINTED)</color>";
+        }
 
         // Show the Return to Lobby Button
         if (btnReturnToLobby != null) 
         {
             btnReturnToLobby.SetActive(true);
-        }
-
-        // Update Top Labels , NOTE TO SELF: MIGHT NEED TO CHANGE THIS 
-        if (playerNameText != null) 
-        {
-            if(winner == myPokemon.name) playerNameText.text += " (WINNER)";
-            else playerNameText.text += " (FAINTED)";
-        }
-        
-        if (enemyNameText != null) 
-        {
-            if(winner == enemyPokemon.name) enemyNameText.text += " (WINNER)";
-            else enemyNameText.text += " (FAINTED)";
         }
     }
 
@@ -943,6 +966,8 @@ public class BattleManager : MonoBehaviour
         if(btnBag) btnBag.onClick.AddListener(() => OpenBag());
         if(btnPokemon) btnPokemon.onClick.AddListener(() => OpenParty());
         if(btnRun) btnRun.onClick.AddListener(() => OnSurrender());
+        
+        InitStatsMenu();
         
         //  Hook up the Party Back Button
         if(btnBack) btnBack.onClick.AddListener(() => ShowMainMenu());
@@ -1359,11 +1384,9 @@ public class BattleManager : MonoBehaviour
         if (myPokemon.hp <= 0)
         {
             BroadcastLog($"{myPokemon.name} fainted from its condition!");
-            // Trigger faint logic (same as OnCalculationReport)
-            // ... (You can copy the faint logic here or make a helper function)
-            // For now, simple safety:
+            // Trigger faint logic
             SetButtonsInteractable(false);
-            networkManager.SendGameOver(enemyPokemon.name); // Enemy wins
+            networkManager.SendGameOver(enemyUsername); // Enemy wins
             return;
         }
 
@@ -1616,5 +1639,53 @@ public class BattleManager : MonoBehaviour
         // 3. Reload the Scene
         // This is the cleanest way to reset all UI/Buttons/Variables
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
+    public void InitStatsMenu()
+    {
+        if (btnShowStats) btnShowStats.onClick.AddListener(() => ToggleStatsPanel(true));
+        if (btnCloseStats) btnCloseStats.onClick.AddListener(() => ToggleStatsPanel(false));
+    }
+
+    // Opens/Closes the window and refreshes data
+    public void ToggleStatsPanel(bool show)
+    {
+        if (panelStats) 
+        {
+            panelStats.SetActive(show);
+            if (show) UpdateStatDisplay(); // Only update numbers when we actually look at them
+        }
+    }
+
+    // The Logic: Read the Pokemon variables and update the text
+    public void UpdateStatDisplay()
+    {
+        // A helper to make positive numbers GREEN and negative numbers RED
+        string Fmt(int stage) 
+        {
+            string color = stage > 0 ? "green" : (stage < 0 ? "red" : "white");
+            string sign = stage > 0 ? "+" : ""; // Add a plus sign for positive numbers
+            return $"<color={color}>{sign}{stage}</color>";
+        }
+
+        // 1. Update My Stats
+        if (myPokemon != null)
+        {
+            if(txtMyAtk) txtMyAtk.text = $"Atk: {Fmt(myPokemon.stageAtk)}";
+            if(txtMyDef) txtMyDef.text = $"Def: {Fmt(myPokemon.stageDef)}";
+            if(txtMySpAtk) txtMySpAtk.text = $"SpAtk: {Fmt(myPokemon.stageSpAtk)}";
+            if(txtMySpDef) txtMySpDef.text = $"SpDef: {Fmt(myPokemon.stageSpDef)}";
+            if(txtMySpd) txtMySpd.text = $"Spd: {Fmt(myPokemon.stageSpeed)}";
+        }
+
+        // 2. Update Enemy Stats
+        if (enemyPokemon != null)
+        {
+            if(txtEnAtk) txtEnAtk.text = $"Atk: {Fmt(enemyPokemon.stageAtk)}";
+            if(txtEnDef) txtEnDef.text = $"Def: {Fmt(enemyPokemon.stageDef)}";
+            if(txtEnSpAtk) txtEnSpAtk.text = $"SpAtk: {Fmt(enemyPokemon.stageSpAtk)}";
+            if(txtEnSpDef) txtEnSpDef.text = $"SpDef: {Fmt(enemyPokemon.stageSpDef)}";
+            if(txtEnSpd) txtEnSpd.text = $"Spd: {Fmt(enemyPokemon.stageSpeed)}";
+        }
     }
 }
