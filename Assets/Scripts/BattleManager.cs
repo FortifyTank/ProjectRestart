@@ -134,7 +134,7 @@ public class BattleManager : MonoBehaviour
     public void SetupBattle(bool isHost)
     {
         isGameOver = false;
-        Debug.Log($"Setting up battle. Am I Host? {isHost}");
+        LogVerbose($"Setting up battle. Am I Host? {isHost}");
 
         // Load Pokemon data
         PokemonDatabase.LoadData();
@@ -143,7 +143,7 @@ public class BattleManager : MonoBehaviour
         if (networkManager.isSpectator)
         {   
             if (btnSpectatorLeave) btnSpectatorLeave.SetActive(true); // have the leave game option
-            Debug.Log("Spectator Mode Active: Initializing View...");
+            LogVerbose("Spectator Mode Active: Initializing View...");
 
             // Use dummy Pokemon for UI
             myPokemon = PokemonDatabase.GetPokemon("Bulbasaur");
@@ -338,7 +338,7 @@ public class BattleManager : MonoBehaviour
         float mult = GetStatMultiplier(myPokemon.stageSpeed);
         int effectiveSpeed = Mathf.FloorToInt(myPokemon.speed * mult);
         
-        Debug.Log($"Base Speed: {myPokemon.speed} | Stage: {myPokemon.stageSpeed} | Effective: {effectiveSpeed}");
+        LogVerbose($"Base Speed: {myPokemon.speed} | Stage: {myPokemon.stageSpeed} | Effective: {effectiveSpeed}");
 
         // Send boosted speed
         CommitAction(moveName, effectiveSpeed, false);
@@ -565,7 +565,7 @@ public class BattleManager : MonoBehaviour
         // Check result
         if (enemyPokemon.hp <= 0)
         {
-            Debug.Log("Enemy confirmed dead. Locking UI.");
+            LogVerbose("Enemy confirmed dead. Locking UI.");
             waitingForOpponentSwitch = true; 
             SetButtonsInteractable(false);
         }
@@ -587,7 +587,7 @@ public class BattleManager : MonoBehaviour
     */
     public void OnResolutionRequest(int correctDamage, int correctHp)
     {
-        Debug.Log($"Opponent corrected my math. Updating Damage: {correctDamage}, Enemy HP: {correctHp}");
+        LogVerbose($"Opponent corrected my math. Updating Damage: {correctDamage}, Enemy HP: {correctHp}");
 
         // Update my view of the enemy
         enemyPokemon.hp = correctHp;
@@ -595,7 +595,7 @@ public class BattleManager : MonoBehaviour
 
         if (enemyPokemon.hp <= 0)
         {
-            Debug.Log("Enemy died after resolution. Locking UI.");
+            LogVerbose("Enemy died after resolution. Locking UI.");
             waitingForOpponentSwitch = true; 
             SetButtonsInteractable(false);
             
@@ -677,7 +677,7 @@ public class BattleManager : MonoBehaviour
     */
     private int CalculateDamage(string moveName, Pokemon attacker, Pokemon defender)
     {   
-        Debug.Log($"[CALC DEBUG] {attacker.name} AtkStage: {attacker.stageAtk} | {defender.name} DefStage: {defender.stageDef}");
+        LogVerbose($"[CALC DEBUG] {attacker.name} AtkStage: {attacker.stageAtk} | {defender.name} DefStage: {defender.stageDef}");
 
         string lookupName = moveName.ToLower();
 
@@ -830,7 +830,7 @@ public class BattleManager : MonoBehaviour
             hasEnemyCommitted = false; 
             if (waitingForOpponentSwitch)
             {
-                Debug.Log($"<color=green>[UNLOCK]</color> New opponent {pokemonName} arrived. Releasing Lock.");
+                LogVerbose($"<color=green>[UNLOCK]</color> New opponent {pokemonName} arrived. Releasing Lock.");
                 waitingForOpponentSwitch = false;
                 SetButtonsInteractable(true);
             }
@@ -1092,7 +1092,7 @@ public class BattleManager : MonoBehaviour
         // 1. Wait until BOTH players have committed
         if (!hasICommitted || !hasEnemyCommitted) return;
 
-        Debug.Log("Resolution: Both Ready!");
+        LogVerbose("Resolution: Both Ready!");
 
         // 2. Decide who is faster
         bool doIGoFirst = false;
@@ -1114,7 +1114,7 @@ public class BattleManager : MonoBehaviour
             else
             {
                 // 3. SPEED TIE! Use the Random Tie Breaker
-                Debug.Log($"Speed Tie! My Roll: {myTieBreaker} vs Enemy: {enemyTieBreaker}");
+                LogVerbose($"Speed Tie! My Roll: {myTieBreaker} vs Enemy: {enemyTieBreaker}");
                 
                 if (myTieBreaker > enemyTieBreaker) doIGoFirst = true;
                 else if (myTieBreaker < enemyTieBreaker) doIGoFirst = false;
@@ -1125,14 +1125,14 @@ public class BattleManager : MonoBehaviour
         // 3. Execute
         if (doIGoFirst)
         {
-            Debug.Log("I am faster! Attacking...");
+            LogVerbose("I am faster! Attacking...");
             ExecuteMyMove(); 
         }
         else
         {
             // I am slower. I wait for the enemy to attack me.
             // AFTER I survive their attack, I will counter-attack.
-            Debug.Log("I am slower. Waiting for impact...");
+            LogVerbose("I am slower. Waiting for impact...");
         }
     }
 
@@ -1173,7 +1173,7 @@ public class BattleManager : MonoBehaviour
                 if (hasEnemyCommitted)
                 {
                     // FIX: Changed "UNLOCKED" to "LOCKED" to be accurate
-                    Debug.Log("[ExecuteMyMove] Switched. Enemy attack is incoming. STAYING LOCKED.");
+                    LogVerbose("[ExecuteMyMove] Switched. Enemy attack is incoming. STAYING LOCKED.");
     
                 }
                 else
@@ -1205,7 +1205,7 @@ public class BattleManager : MonoBehaviour
         
             // We just attacked. We don't know the result yet.
             // We must WAIT for the Calculation Report (or Game Over) to unlock us.
-            Debug.Log("[ExecuteMyMove] Attack sent. Waiting for damage report...");
+            LogVerbose("[ExecuteMyMove] Attack sent. Waiting for damage report...");
         }
     }
 
@@ -1216,7 +1216,7 @@ public class BattleManager : MonoBehaviour
     public void RefreshPartyUI()
     {   
         if (partyButtons == null) Debug.LogError("Party Buttons Array is NULL!");
-        else Debug.Log($"Refreshing UI. Party Count: {myParty.Count} | Button Slots: {partyButtons.Length}");
+        else LogVerbose($"Refreshing UI. Party Count: {myParty.Count} | Button Slots: {partyButtons.Length}");
 
         for (int i = 0; i < partyButtons.Length; i++)
         {
@@ -1350,12 +1350,12 @@ public class BattleManager : MonoBehaviour
     */
     private void TryEndTurn()
     {
-        Debug.Log($"[TryEndTurn Check] MyHP: {myPokemon.hp}, EnemyHP: {enemyPokemon.hp}");
-        Debug.Log($"[TryEndTurn Flags] Pending: '{myPendingMove}', I_Committed: {hasICommitted}, Enemy_Committed: {hasEnemyCommitted}");
+        LogVerbose($"[TryEndTurn Check] MyHP: {myPokemon.hp}, EnemyHP: {enemyPokemon.hp}");
+        LogVerbose($"[TryEndTurn Flags] Pending: '{myPendingMove}', I_Committed: {hasICommitted}, Enemy_Committed: {hasEnemyCommitted}");
 
         if (waitingForOpponentSwitch)
         {
-            Debug.Log("[TryEndTurn] BLOCKED: Waiting for opponent to switch...");
+            LogVerbose("[TryEndTurn] BLOCKED: Waiting for opponent to switch...");
             SetButtonsInteractable(false);
             return;
         }
@@ -1363,7 +1363,7 @@ public class BattleManager : MonoBehaviour
         // 1. Am I dead? (Forced Switch)
         if (myPokemon.hp <= 0) 
         {
-            Debug.Log("[TryEndTurn] BLOCKED: I fainted!");
+            LogVerbose("[TryEndTurn] BLOCKED: I fainted!");
             SetButtonsInteractable(false);
             return;
         }
@@ -1371,7 +1371,7 @@ public class BattleManager : MonoBehaviour
         // 2. Is the enemy dead? (Waiting for replacement)
         if (enemyPokemon.hp <= 0)
         {
-            Debug.Log("[TryEndTurn] BLOCKED: Enemy fainted! Waiting for new pokemon...");
+            LogVerbose("[TryEndTurn] BLOCKED: Enemy fainted! Waiting for new pokemon...");
             SetButtonsInteractable(false);
             return;
         }
@@ -1379,7 +1379,7 @@ public class BattleManager : MonoBehaviour
         // 3. Did I finish my move?
         if (!string.IsNullOrEmpty(myPendingMove))
         {
-            Debug.Log($"[TryEndTurn] BLOCKED: I still have a pending move: {myPendingMove}");
+            LogVerbose($"[TryEndTurn] BLOCKED: I still have a pending move: {myPendingMove}");
             SetButtonsInteractable(false);
             return;
         }
@@ -1387,7 +1387,7 @@ public class BattleManager : MonoBehaviour
         // 4. Did the enemy finish their move?
         if (hasEnemyCommitted)
         {
-            Debug.Log("[TryEndTurn] BLOCKED: Enemy still needs to act.");
+            LogVerbose("[TryEndTurn] BLOCKED: Enemy still needs to act.");
             SetButtonsInteractable(false);
             return;
         }
@@ -1407,7 +1407,7 @@ public class BattleManager : MonoBehaviour
         }
 
         // 5. ALL CLEAR!
-        Debug.Log("[TryEndTurn] SUCCESS! Unlocking buttons.");
+        LogVerbose("[TryEndTurn] SUCCESS! Unlocking buttons.");
         SetButtonsInteractable(true);
         
         // Safety Reset
@@ -1432,7 +1432,7 @@ public class BattleManager : MonoBehaviour
         SetButtonsInteractable(true);
         ShowMainMenu();
 
-        Debug.Log("[TURN END] FORCED RESET: All flags cleared and buttons unlocked.");
+        LogVerbose("[TURN END] FORCED RESET: All flags cleared and buttons unlocked.");
     }
 
     /*
@@ -1468,7 +1468,7 @@ public class BattleManager : MonoBehaviour
         // 2. CHECK FOR DEATH
         if (enemyPokemon.hp <= 0)
         {
-            Debug.Log("<color=red>[CONFIRM LOCK]</color> Enemy is dead. Keeping Hard Lock.");
+            LogVerbose("<color=red>[CONFIRM LOCK]</color> Enemy is dead. Keeping Hard Lock.");
             waitingForOpponentSwitch = true; // Ensure this is true
             SetButtonsInteractable(false);
             return;
@@ -1702,6 +1702,15 @@ public class BattleManager : MonoBehaviour
             if(txtEnSpAtk) txtEnSpAtk.text = $"SpAtk: {Fmt(enemyPokemon.stageSpAtk)}";
             if(txtEnSpDef) txtEnSpDef.text = $"SpDef: {Fmt(enemyPokemon.stageSpDef)}";
             if(txtEnSpd) txtEnSpd.text = $"Spd: {Fmt(enemyPokemon.stageSpeed)}";
+        }
+    }
+
+    private void LogVerbose(string message)
+    {
+        // Only log if the NetworkManager exists AND Verbose Mode is ON
+        if (networkManager != null && networkManager.verboseMode)
+        {
+            Debug.Log(message);
         }
     }
 }
