@@ -1,13 +1,20 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-// Attach to a GameObject and assign a target Image and a dex number to test sprite loading.
+// Simple test helper: attach to any GameObject, set a target Image and a
+// Pokédex number, and it will try to load the sprite via the legacy loader
+// so you can quickly check paths/imports.
 public class SpriteTester : MonoBehaviour
 {
     public LoadSprites loader;
     public Image targetImage;
     public int testDex = 1;
 
+    /*
+    On start, grabs a `LoadSprites` instance if one isn’t assigned, then tries
+    to load the sprite for the chosen dex number. Logs what happened and sets
+    the Image if something was found.
+    */
     void Start()
     {
         if (loader == null)

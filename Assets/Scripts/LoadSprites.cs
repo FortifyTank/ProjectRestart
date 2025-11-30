@@ -2,17 +2,16 @@
 using UnityEngine;
 
 /// <summary>
-/// [DEPRECATED] Original sprite loading component - no longer actively used.
+/// This is the original, now‑deprecated sprite loader MonoBehaviour that
+/// either builds a cache from a ScriptableObject map or bulk‑loads sprites
+/// from the Resources folder by Pokédex number. At startup it fills a
+/// dictionary for quick lookups and logs any obvious gaps so path/import
+/// issues are easier to spot.
 /// 
-/// CURRENT SPRITE LOADING APPROACH:
-/// - BattleManager.UpdateBattleUI() loads sprites directly using Resources.Load<Sprite>("Sprites/{pokedexId}")
-/// - This approach is simpler and more reliable (no component dependencies or timing issues)
-/// 
-/// LEGACY APPROACH (this component):
-/// - Preloaded all sprites into a dictionary at startup
-/// - Had issues with timing (needed to load before PokemonDatabase.LoadData())
-/// - Required component to exist in scene
-/// - This component remains for reference but is not required for the game to work
+/// The project currently prefers loading directly via Resources in
+/// `BattleManager.UpdateBattleUI()` for fewer moving parts and simpler
+/// timing, but this component sticks around as a lightweight reference and
+/// editor helper if a prebuilt map or early caching workflow is desired.
 /// </summary>
 public class LoadSprites : MonoBehaviour
 {
@@ -22,6 +21,12 @@ public class LoadSprites : MonoBehaviour
     [Tooltip("Optional: assign the generated PokemonSpriteMap asset to load sprites from it instead of Resources.")]
     [SerializeField] private PokemonSpriteMap spriteMap;
 
+    /*
+    Kicks on the legacy sprite loader: if there’s a ScriptableObject map,
+    use it; otherwise grab sprites from Resources as a simple fallback.
+    Also logs a quick “hey these look missing” so path/import hiccups are easy
+    to spot.
+    */
     private void Awake()
     {
         // Prefer using the ScriptableObject map if assigned
@@ -44,6 +49,10 @@ public class LoadSprites : MonoBehaviour
             Debug.LogWarning($"LoadSprites: Missing sprites for dex numbers: {string.Join(", ", missing)} (first 10 checked). Check Resources/Sprites and importer settings.");
     }
 
+    /*
+    Clears the cache and loads entries from the assigned `PokemonSpriteMap`.
+    Skips nulls and keeps things tidy.
+    */
     private void BuildFromSpriteMap()
     {
         spritesByDex.Clear();
@@ -55,6 +64,11 @@ public class LoadSprites : MonoBehaviour
         }
     }
 
+    /*
+    Bulk-load from `Resources/Sprites/{dex}` into a dictionary keyed by
+    Pokédex number. Simple, reliable, and great for small projects or editor
+    tinkering.
+    */
     private void PreloadAll(int maxDex = 801)
     {
         spritesByDex.Clear();
@@ -65,11 +79,20 @@ public class LoadSprites : MonoBehaviour
         }
     }
 
+    /*
+    Quick lookup by Pokédex number. If it’s cached, return the sprite;
+    otherwise return null (no fuss).
+    */
     public Sprite LoadSpriteByNumber(int pokedexNumber)
     {
         return spritesByDex.TryGetValue(pokedexNumber, out var sp) ? sp : null;
     }
 
+    /*
+    Takes a CSV sprite field (extensions/paths optional) and turns it into a
+    Resource path. If there’s a sprite map and the field parses as a dex
+    number, prefer the cached entry.
+    */
     public Sprite LoadSpriteFromCsvField(string spritePathWithoutExt)
     {
         if (string.IsNullOrEmpty(spritePathWithoutExt)) return null;
@@ -86,6 +109,10 @@ public class LoadSprites : MonoBehaviour
         return Resources.Load<Sprite>(path);
     }
 
+    /*
+    Cleans up a path-like CSV field: trims `.png`, removes `Resources/` or
+    `Assets/Resources/`, and returns a neat relative path.
+    */
     private string WithoutExtension(string v)
     {
         if (string.IsNullOrEmpty(v)) return v;
@@ -95,7 +122,10 @@ public class LoadSprites : MonoBehaviour
         return v.TrimStart('/');
     }
 
-    // Editor / debug helper to rebuild from Resources at runtime
+    /*
+    Editor/debug helper: rebuild the cache from Resources at runtime. Handy
+    when tweaking import settings or shuffling sprite folders.
+    */
     public void RebuildFromResources()
     {
         PreloadAll(maxDex);
