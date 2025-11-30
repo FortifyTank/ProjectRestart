@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using System.Collections.Generic;
+using UnityEngine.SceneManagement;
 
 public class BattleManager : MonoBehaviour
 {
@@ -22,6 +23,12 @@ public class BattleManager : MonoBehaviour
 
     [Header("Waiting Screen")]
     public GameObject panelWaiting;
+
+    [Header("End Game UI")]
+    public GameObject btnReturnToLobby;
+
+    [Header("Spectator UI")]
+    public GameObject btnSpectatorLeave;
 
     [Header("Bag UI")]
     public GameObject bagPanel;      // Assign the BagPanel object
@@ -123,7 +130,8 @@ public class BattleManager : MonoBehaviour
 
         // Spectator mode
         if (networkManager.isSpectator)
-        {
+        {   
+            if (btnSpectatorLeave) btnSpectatorLeave.SetActive(true); // have the leave game option
             Debug.Log("Spectator Mode Active: Initializing View...");
 
             // Use dummy Pokemon for UI
@@ -147,6 +155,10 @@ public class BattleManager : MonoBehaviour
             
             // Spectators don't send setup
             return; 
+        }
+        else
+        {
+            if (btnSpectatorLeave) btnSpectatorLeave.SetActive(false);// if not spectator then dont show leave game option
         }
         // 2. BUILD MY PARTY (6v6 Logic)
         myParty.Clear();
@@ -598,10 +610,16 @@ public class BattleManager : MonoBehaviour
         isGameOver = true;
         SetButtonsInteractable(false);
         
-        // 1. Print to Chat (Crucial for Spectators)
+        // Print to Chat (Crucial for Spectators)
         networkManager.AddChatMessage("System", $"GAME OVER! Winner: {winner}");
 
-        // 2. Update Top Labels
+        // Show the Return to Lobby Button
+        if (btnReturnToLobby != null) 
+        {
+            btnReturnToLobby.SetActive(true);
+        }
+
+        // Update Top Labels , NOTE TO SELF: MIGHT NEED TO CHANGE THIS 
         if (playerNameText != null) 
         {
             if(winner == myPokemon.name) playerNameText.text += " (WINNER)";
@@ -990,6 +1008,7 @@ public class BattleManager : MonoBehaviour
         networkManager.AddChatMessage("System", "You surrendered!");
         networkManager.SendGameOver(enemyUsername); // Give win to enemy
         OnGameOver(enemyUsername);
+        Invoke("ResetGame", 3.0f);
     }
 
     /*
@@ -1579,5 +1598,23 @@ public class BattleManager : MonoBehaviour
                 words[i] = char.ToUpper(words[i][0]) + words[i].Substring(1);
         }
         return string.Join(" ", words);
+    }
+
+    public void ResetGame()
+    {
+        // 1. Disconnect Network
+        if (networkManager != null)
+        {
+            networkManager.Shutdown(); // We will write this next
+        }
+
+        // 2. Clear Static Data (Crucial!)
+        // If we don't clear this, the next game might try to load the old party
+        myParty.Clear();
+        enemyParty.Clear();
+        
+        // 3. Reload the Scene
+        // This is the cleanest way to reset all UI/Buttons/Variables
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
 }

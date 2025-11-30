@@ -1215,5 +1215,19 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
-    
+    public void Shutdown()
+    {
+        isAppRunning = false; // Stop the threads
+        
+        // Close Sockets
+        if (chatClient != null) { chatClient.Close(); chatClient = null; }
+        if (broadcastClient != null) { broadcastClient.Close(); broadcastClient = null; }
+        
+        // Abort Threads
+        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
+
+        // Clear Lobby Data
+        activeRoomButtons.Clear();
+        activeRoomStatuses.Clear();
+    }
 }
