@@ -112,7 +112,8 @@ public class BattleManager : MonoBehaviour
     public Button[] partyButtons;
 
     public bool isForcedSwitch = false;
-
+    public string spectatorP1Name = "Player 1";
+    public string spectatorP2Name = "Player 2";
     /*
     Runs once when the battle scene wakes up. Hooks up menus, obtains the
     network manager if needed, and keeps inputs disabled until setup completes
@@ -249,9 +250,17 @@ public class BattleManager : MonoBehaviour
     move list.
     */
     void UpdateBattleUI()
-    {
+    {   
+        string p1NameDisplay = myUsername; 
+        string p2NameDisplay = enemyUsername;
+
+        if (networkManager != null && networkManager.isSpectator)
+        {
+            p1NameDisplay = spectatorP1Name;
+            p2NameDisplay = spectatorP2Name;
+        }
         // Update player stats and name
-        if (playerNameText != null) playerNameText.text = myUsername + $" ({myPokemon.name})";
+        if (playerNameText != null) playerNameText.text = p1NameDisplay + $" ({myPokemon.name})";
         if (playerHpBar != null) 
         { 
             playerHpBar.maxValue = myPokemon.maxHp; 
@@ -276,7 +285,7 @@ public class BattleManager : MonoBehaviour
         }
 
         // Update enemy stats and name
-        if (enemyNameText != null) enemyNameText.text = enemyUsername + $" ({enemyPokemon.name})";
+        if (enemyNameText != null) enemyNameText.text = p2NameDisplay + $" ({enemyPokemon.name})";
         if (enemyHpBar != null) 
         { 
             enemyHpBar.maxValue = enemyPokemon.maxHp; 
@@ -622,19 +631,24 @@ public class BattleManager : MonoBehaviour
         
         // clean names
         string cleanWinner = winner.Trim();
-        string cleanMe = myUsername.Trim();
-        string cleanEnemy = enemyUsername.Trim();
+        string leftSideName = myUsername.Trim();
+        string rightSideName = enemyUsername.Trim();
 
-        Debug.Log($"[GAME OVER] Winner: '{cleanWinner}' | Me: '{cleanMe}' | Enemy: '{cleanEnemy}'");
+        if (networkManager != null && networkManager.isSpectator)
+        {
+            leftSideName = spectatorP1Name.Trim();    // Host (Left)
+            rightSideName = spectatorP2Name.Trim();   // Joiner (Right)
+        }
 
+        Debug.Log($"[GAME OVER] Winner: '{cleanWinner}' | Left: '{leftSideName}' | Right: '{rightSideName}'");
+        
         // Print to Chat (Crucial for Spectators)
         networkManager.AddChatMessage("System", $"GAME OVER! Winner: {winner}");
 
         // Update Top Labels , NOTE TO SELF: MIGHT NEED TO CHANGE THIS 
         if (playerNameText != null) 
-    {
-        // Check if I won
-            if (cleanWinner == cleanMe) 
+        {
+            if (cleanWinner == leftSideName) 
                 playerNameText.text += " <color=green>(WINNER)</color>";
             else 
                 playerNameText.text += " <color=red>(FAINTED)</color>";
@@ -642,8 +656,7 @@ public class BattleManager : MonoBehaviour
         
         if (enemyNameText != null) 
         {
-            // Check if Enemy Won
-            if (cleanWinner == cleanEnemy) 
+            if (cleanWinner == rightSideName) 
                 enemyNameText.text += " <color=green>(WINNER)</color>";
             else 
                 enemyNameText.text += " <color=red>(FAINTED)</color>";
@@ -865,8 +878,10 @@ public class BattleManager : MonoBehaviour
     Spectator‑only helper: shove the live names + HP/maxHP from the host
     into our local copies, then refresh the UI so the view stays honest.
     */
-    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
+    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string realHostName, string realJoinerName)
     {
+        spectatorP1Name = realHostName;
+        spectatorP2Name = realJoinerName;
         // 1. Host Side (Player 1)
         // If the name is different (or null), load the Pokemon data from DB
         if (myPokemon == null || myPokemon.name != hName)
@@ -899,8 +914,9 @@ public class BattleManager : MonoBehaviour
         if (networkManager != null && networkManager.isHosting)
         {
             networkManager.SendSpectatorSync(
-                myPokemon.name, myPokemon.hp, myPokemon.maxHp,
-                enemyPokemon.name, enemyPokemon.hp, enemyPokemon.maxHp
+            myPokemon.name, myPokemon.hp, myPokemon.maxHp,
+            enemyPokemon.name, enemyPokemon.hp, enemyPokemon.maxHp,
+            myUsername, enemyUsername
             );
         }
     }

@@ -399,11 +399,15 @@ public class UDPChatManager : MonoBehaviour
             int cHp = int.Parse(ParseValue(rawData, "client_hp"));
             int cMax = int.Parse(ParseValue(rawData, "client_max"));
 
+            string hUser = ParseValue(rawData, "host_username");
+            string cUser = ParseValue(rawData, "client_username");
+
             // 3. Force the UI to match
             if (battleManager != null)
             {
-                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax);
-                battleManager.SetWaitingMode(false);// battle happening, remove gray screen
+                // Pass the names to the function
+                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax, hUser, cUser);
+                battleManager.SetWaitingMode(false);
             }
         }
     }
@@ -1055,6 +1059,27 @@ public class UDPChatManager : MonoBehaviour
         if (stickerMessagePrefab == null || chatContent == null) return;
 
         byte[] imageBytes = System.Convert.FromBase64String(base64Data);
+
+        //save sticker locally logic
+        try 
+        {
+            // 1. Create Folder
+            string folder = Application.persistentDataPath + "/SavedStickers";
+            if (!System.IO.Directory.Exists(folder)) System.IO.Directory.CreateDirectory(folder);
+
+            // 2. Create Filename with format = Sticker_Sender_Timestamp.png
+            string filename = $"Sticker_{sender}_{System.DateTime.Now:yyyyMMdd_HHmmss}.png";
+            string path = System.IO.Path.Combine(folder, filename);
+
+            // 3. Write File
+            System.IO.File.WriteAllBytes(path, imageBytes);
+            Debug.Log($"[Sticker] Saved to: {path}");
+        }
+        catch (System.Exception e) 
+        {
+            Debug.LogError($"Failed to save sticker: {e.Message}");
+        }
+
         Texture2D tex = new Texture2D(2, 2);
         tex.LoadImage(imageBytes); 
         Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
@@ -1102,6 +1127,8 @@ public class UDPChatManager : MonoBehaviour
         panelMenu.SetActive(false);
         panelChat.SetActive(true);
         AddChatMessage("System", "Sent Spectator Request...");
+
+        if(statusText != null) statusText.text = "Spectating...";
     }
 
     public TMP_InputField spectateIpInput;
@@ -1170,7 +1197,7 @@ public class UDPChatManager : MonoBehaviour
     /*
     Snapshot host/client Pokémon names and HP values to keep spectators in sync.
     */
-    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax)
+    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string hUser, string cUser)
     {
         string payload = $"message_type: SPECTATOR_SYNC\n" +
                         $"host_mon: {hName}\n" +
@@ -1179,6 +1206,8 @@ public class UDPChatManager : MonoBehaviour
                         $"client_mon: {cName}\n" +
                         $"client_hp: {cHp}\n" +
                         $"client_max: {cMax}\n" +
+                        $"host_username: {hUser}\n" +
+                        $"client_username: {cUser}\n" +
                         $"sequence_number: {GetNextSeq()}";
                         
         // Send to all spectators
