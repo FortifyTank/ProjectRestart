@@ -147,7 +147,7 @@ GameObject:
   - component: {fileID: 6968138272583093720}
   - component: {fileID: 8498028751028985924}
   m_Layer: 5
-  m_Name: SimpleRoomButton
+  m_Name: RoomButtonPrefab
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
