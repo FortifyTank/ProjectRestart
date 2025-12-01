@@ -821,29 +821,52 @@ public class BattleManager : MonoBehaviour
         {
             if (enemyParty[i].name == pokemonName) { p = enemyParty[i]; break; }
         }
+        
+        // If not found in party, load from DB
         if (p == null)
         {
             p = PokemonDatabase.GetPokemon(pokemonName);
             if (p != null) enemyParty.Add(p);
         }
+
         if (p != null)
         {
             enemyPokemon = p;
             UpdateBattleUI();
             SendSpectatorUpdate();
+            
+            // --- LOGIC FIX STARTS HERE ---
+            
+            // Mark the enemy as having "acted" (their action was the switch)
             hasEnemyCommitted = false; 
-            if (waitingForOpponentSwitch)
+
+            // SCENARIO 1: Mid-Turn Switch (I am slower/waiting)
+            // If I have locked in a move, this Switch was the "Turn 1" action I was waiting for.
+            // Now I must execute MY action.
+            if (hasICommitted)
+            {
+                LogVerbose($"[Turn Order] Opponent switched to {pokemonName}. Proceeding with my move...");
+                ExecuteMyMove();
+            }
+            // SCENARIO 2: Dead Pokemon Replacement
+            // The enemy fainted, we were waiting for them to send a new one.
+            else if (waitingForOpponentSwitch)
             {
                 LogVerbose($"<color=green>[UNLOCK]</color> New opponent {pokemonName} arrived. Releasing Lock.");
                 waitingForOpponentSwitch = false;
                 SetButtonsInteractable(true);
             }
+            // SCENARIO 3: Normal Update (Start of game, or spectator sync)
             else
             {
                 SetButtonsInteractable(true);
-            } 
+            }
+            // -----------------------------
         }
-        else Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
+        else 
+        {
+            Debug.LogError($"Could not find opponent pokemon: {pokemonName}");
+        }
     }
 
     /*
