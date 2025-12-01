@@ -236,6 +236,10 @@ public class BattleManager : MonoBehaviour
         SetButtonsInteractable(true);
     }
 
+    /*
+    Shows or hides the waiting screen panel. Displayed when host is waiting for
+    an opponent to connect, hidden once handshake completes or when joining/spectating.
+    */
     public void SetWaitingMode(bool isWaiting)
     {
         if (panelWaiting != null)
@@ -1639,6 +1643,10 @@ public class BattleManager : MonoBehaviour
         return string.Join(" ", words);
     }
 
+    /*
+    Resets the game and returns to lobby: shuts down network, clears party data,
+    and reloads the scene. Called after game over or when clicking "Return to Lobby".
+    */
     public void ResetGame()
     {
         // 1. Disconnect Network
@@ -1651,29 +1659,39 @@ public class BattleManager : MonoBehaviour
         // If we don't clear this, the next game might try to load the old party
         myParty.Clear();
         enemyParty.Clear();
-        
+
         // 3. Reload the Scene
         // This is the cleanest way to reset all UI/Buttons/Variables
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
 
+    /*
+    Initializes stat panel button listeners. Wires up Show/Close buttons to toggle
+    the stat comparison view. Called from InitializeMenus() during battle setup.
+    */
     public void InitStatsMenu()
     {
         if (btnShowStats) btnShowStats.onClick.AddListener(() => ToggleStatsPanel(true));
         if (btnCloseStats) btnCloseStats.onClick.AddListener(() => ToggleStatsPanel(false));
     }
 
-    // Opens/Closes the window and refreshes data
+    /*
+    Shows or hides the stat panel. When opening, refreshes all stat values to
+    ensure current data is displayed. When closing, simply hides the panel.
+    */
     public void ToggleStatsPanel(bool show)
     {
-        if (panelStats) 
+        if (panelStats)
         {
             panelStats.SetActive(show);
             if (show) UpdateStatDisplay(); // Only update numbers when we actually look at them
         }
     }
 
-    // The Logic: Read the Pokemon variables and update the text
+    /*
+    Updates stat panel with current stage values for both Pokemon using color coding:
+    GREEN (+) for boosts, RED (-) for reductions, WHITE for neutral. Called when panel opens.
+    */
     public void UpdateStatDisplay()
     {
         // A helper to make positive numbers GREEN and negative numbers RED

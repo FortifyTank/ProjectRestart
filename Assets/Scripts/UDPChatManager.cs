@@ -76,7 +76,7 @@ public class UDPChatManager : MonoBehaviour
         public string payload;
         public float timeSinceLastSend;
         public int retryCount;
-        public IPEndPoint destination; // [NEW] Track who this specific packet is for
+        public IPEndPoint destination; // Track who this specific packet is for
     }
     private List<PendingPacket> pendingPackets = new List<PendingPacket>();
     private Dictionary<string, HashSet<int>> receivedSequencesPerUser = new Dictionary<string, HashSet<int>>();
@@ -135,7 +135,7 @@ public class UDPChatManager : MonoBehaviour
                     {
                         if(verboseMode) Debug.LogWarning($"[Resending] Seq {pkt.sequenceNumber} to {pkt.destination}");
                         
-                        // [FIX] Resend to the specific destination stored in the packet
+                        // Resend to the specific destination stored in the packet
                         SendRawBytes(Encoding.UTF8.GetBytes(pkt.payload), pkt.destination); 
                         
                         pkt.timeSinceLastSend = 0f;
@@ -153,8 +153,8 @@ public class UDPChatManager : MonoBehaviour
     }
 
     /*
-    Processes text/sticker chat, updates discovered rooms, and routes battle
-    packets to the right handlers. Keeps UI work off the network thread.
+    Processes queued messages from background threads on the main thread for safe UI updates.
+    Handles chat messages, room discoveries, and battle events. Called every frame.
     */
     private void ProcessQueues()
     {
@@ -215,7 +215,7 @@ public class UDPChatManager : MonoBehaviour
             string joinerName = ParseValue(rawData, "username");
             if (string.IsNullOrEmpty(joinerName)) joinerName = "Unknown Player";
 
-            // [FIX] Store the name!
+            // Store the name!
             if (battleManager != null) 
             {
                 battleManager.enemyUsername = joinerName;
@@ -238,10 +238,10 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "HANDSHAKE_RESPONSE")
         {   
-            string hostName = ParseValue(rawData, "username"); // [NEW] Parse Host Name
+            string hostName = ParseValue(rawData, "username"); // Parse Host Name
             if (string.IsNullOrEmpty(hostName)) hostName = "Host";
 
-            // [FIX] Store the name!
+            // Store the name!
             if (battleManager != null) 
             {
                 battleManager.enemyUsername = hostName;
@@ -301,7 +301,7 @@ public class UDPChatManager : MonoBehaviour
                 battleManager.enemyPendingMove = move;
                 battleManager.enemyPendingSpeed = speed;
                 battleManager.isEnemyActionSwitch = isSwitch;
-                battleManager.enemyTieBreaker = tieBreaker; // [NEW] Save it
+                battleManager.enemyTieBreaker = tieBreaker; // Save it
                 battleManager.hasEnemyCommitted = true;
                 
                 // 3. Try to Resolve
@@ -338,14 +338,14 @@ public class UDPChatManager : MonoBehaviour
         }
         else if (type == "CALCULATION_REPORT")
         {
-            // [CRITICAL FIX] REMOVED "if (!isSpectator)"
+            // REMOVED "if (!isSpectator)"
             // Spectators MUST run this now, because the logic is inside BattleManager!
 
             string attackerName = ParseValue(rawData, "attacker"); 
             int dmg = int.Parse(ParseValue(rawData, "damage_dealt"));
             int hp = int.Parse(ParseValue(rawData, "defender_hp_remaining"));
             
-            // [NEW] Parse the 'is_host' boolean
+            // Parse the 'is_host' boolean
             // We use TryParse to be safe (defaults to false if missing)
             string isHostStr = ParseValue(rawData, "is_host");
             bool isHost = false;
@@ -853,9 +853,9 @@ public class UDPChatManager : MonoBehaviour
     }
 
     /*
-    Broadcast a simple ROOM announcement so joiners can discover the host.
+    Broadcasts the host's room info (username and status: OPEN/FULL) to the local
+    network via UDP. Called every second when hosting to advertise room availability.
     */
-    // Replace your existing BroadcastPresence method
     private void BroadcastPresence()
     {
         try
@@ -877,8 +877,9 @@ public class UDPChatManager : MonoBehaviour
     }
 
     /*
-    Start a background listener for ROOM broadcasts, queuing discovered IPs
-    when not hosting.
+    Starts a background thread to listen for room broadcast packets on the network.
+    Discovered rooms (IP, host name, status) are queued for main thread UI updates.
+    Only processes broadcasts when not hosting to avoid self-discovery.
     */
     private void StartDiscoveryListener()
     {
@@ -921,10 +922,10 @@ public class UDPChatManager : MonoBehaviour
     }
 
     /*
-    Spawn a “Join {ip}” button in the room list and wire it up.
+    Creates a room button in the lobby UI showing the host's name and status.
+    Registers the button for future updates and wires up Join/Spectate functionality.
+    Called when a new room is discovered via broadcast.
     */
-    // Update the signature to accept hostName
-    // Update the signature to accept 'status'
     private void CreateRoomButton(string ip, string hostName, string status)
     {
         if(roomButtonPrefab == null || roomListContent == null) return;
@@ -948,6 +949,10 @@ public class UDPChatManager : MonoBehaviour
         UpdateRoomButtonVisuals(ip, status);
     }
 
+    /*
+    Updates a room button's appearance based on status. Join button disabled when FULL,
+    enabled when OPEN. Spectate button always enabled. Called when room status changes.
+    */
     private void UpdateRoomButtonVisuals(string ip, string status)
     {
         // Safety check: do we actually have a button for this IP?
@@ -1169,7 +1174,7 @@ public class UDPChatManager : MonoBehaviour
                 cleanMsg += line + "\n";
         }
 
-        // FIXED: Generate ONE sequence number
+        // Generate ONE sequence number
         int relaySeq = GetNextSeq();
         string newPayload = cleanMsg + $"sequence_number: {relaySeq}";
 
@@ -1188,7 +1193,7 @@ public class UDPChatManager : MonoBehaviour
         {
             if (!target.Equals(senderEP))
             {
-                // FIXED: DO NOT generate a new seq number here
+                // DO NOT generate a new seq number here
                 AddToPending(relaySeq, newPayload, target);
             }
         }
@@ -1244,6 +1249,10 @@ public class UDPChatManager : MonoBehaviour
         SendReliablePacket(payload);
     }
 
+    /*
+    Shuts down all network components: stops threads, closes UDP sockets, and clears
+    lobby data. Called when returning to lobby or exiting to prevent resource leaks.
+    */
     public void Shutdown()
     {
         isAppRunning = false; // Stop the threads
