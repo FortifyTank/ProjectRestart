@@ -136,6 +136,8 @@ ProjectRestart/
 │   │   ├── GameConstants.cs          # Enums and shared data structures
 │   │   ├── StickerManager.cs         # Chat sticker support
 │   │   ├── LoadSprites.cs            # Sprite loading utilities
+│   │   ├── SpriteMap.cs              # Sprite mapping utilities
+│   │   ├── SpriteTester.cs           # Sprite testing utilities
 │   │   └── WindowSetup.cs            # Window configuration
 │   ├── Resources/
 │   │   └── Sprites/                  # Pokemon sprite images
