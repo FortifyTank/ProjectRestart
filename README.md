@@ -11,6 +11,32 @@ This project is a real-time multiplayer Pokemon battle simulator where players c
 
 The game logic, protocol architecture, and UI were designed by our group with the assistance of AI tools, including image generators and Gemini. We utilized these tools for technical guidance on Unity UI development and for sourcing CSV data. Furthermore, AI was heavily employed for debugging during our rigorous playtesting phase to ensure stability. Additional features, such as the Pokédex system and complex Status Effects, were implemented at our own discretion to enhance gameplay depth. While AI assisted in generating code documentation, we maintain full understanding and ownership of our codebase, particularly the custom UDP protocol and its reliability layer.
 
+
+## Contributions
+
+Matthew
+- Main Battle Logic
+- UDP Layer
+- Main Unity interaction button binder
+- Additional Feautures
+
+Kane
+- Gameplay UI
+- Hard Playtester
+- Documentation
+- Comments
+
+Justine
+- Sprite Loader
+- Coding assistance
+- CSV file loader
+
+Bianca
+- Stickers
+- Background images
+- Script
+- Documentation
+
 ## Features
 
 ### Core Protocol Implementation 
@@ -265,5 +291,6 @@ Expected fields: ID, Name, Type, Category, Power, Damage Class, Ailment ID, Ailm
 - No animations or sound effects
 - Basic sprite rendering
 - Windows-optimized (may require adjustments for other platforms)
+
 
 
