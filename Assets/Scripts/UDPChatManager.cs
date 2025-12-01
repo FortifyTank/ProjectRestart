@@ -402,11 +402,14 @@ public class UDPChatManager : MonoBehaviour
             string hUser = ParseValue(rawData, "host_username");
             string cUser = ParseValue(rawData, "client_username");
 
+            string hStats = ParseValue(rawData, "host_stats");
+            string cStats = ParseValue(rawData, "client_stats");
+
             // 3. Force the UI to match
             if (battleManager != null)
             {
                 // Pass the names to the function
-                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax, hUser, cUser);
+                battleManager.ForceUpdateSpectatorView(hName, hHp, hMax, cName, cHp, cMax, hUser, cUser, hStats, cStats);
                 battleManager.SetWaitingMode(false);
             }
         }
@@ -1202,7 +1205,7 @@ public class UDPChatManager : MonoBehaviour
     /*
     Snapshot host/client Pokémon names and HP values to keep spectators in sync.
     */
-    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string hUser, string cUser)
+    public void SendSpectatorSync(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string hUser, string cUser, string hStats, string cStats)
     {
         string payload = $"message_type: SPECTATOR_SYNC\n" +
                         $"host_mon: {hName}\n" +
@@ -1213,6 +1216,8 @@ public class UDPChatManager : MonoBehaviour
                         $"client_max: {cMax}\n" +
                         $"host_username: {hUser}\n" +
                         $"client_username: {cUser}\n" +
+                        $"host_stats: {hStats}\n" +
+                        $"client_stats: {cStats}\n" +
                         $"sequence_number: {GetNextSeq()}";
                         
         // Send to all spectators

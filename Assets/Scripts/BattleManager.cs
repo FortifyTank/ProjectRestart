@@ -384,21 +384,37 @@ public class BattleManager : MonoBehaviour
         int sentAtkStage = 0;
         int sentDefStage = 0;
 
-        if (MoveLoader.Moves.ContainsKey(lastMoveUsedByMe.ToLower()))
-        {
-            MoveData move = MoveLoader.Moves[lastMoveUsedByMe.ToLower()];
+        string moveKey = lastMoveUsedByMe.ToLower();
 
+        // CASE A: Standard Move from Database
+        if (MoveLoader.Moves.ContainsKey(moveKey))
+        {
+            MoveData move = MoveLoader.Moves[moveKey];
             if (move.category == "Physical")
             {
-                sentAtkStage = myPokemon.stageAtk;      // My attack
-                sentDefStage = enemyPokemon.stageDef;   // Enemy defense
+                sentAtkStage = myPokemon.stageAtk;
+                sentDefStage = enemyPokemon.stageDef;
             }
             else if (move.category == "Special")
             {
-                sentAtkStage = myPokemon.stageSpAtk;    // My sp. atk
-                sentDefStage = enemyPokemon.stageSpDef; // Enemy sp. def
+                sentAtkStage = myPokemon.stageSpAtk;
+                sentDefStage = enemyPokemon.stageSpDef;
             }
         }
+        // CASE B: Items (X-Attack, X-Defense, etc.)
+        else if (lastMoveUsedByMe.StartsWith("X-"))
+        {
+            // If I used an item, I need to tell the enemy my new stat!
+            if (lastMoveUsedByMe == "X-Attack") sentAtkStage = myPokemon.stageAtk;
+            else if (lastMoveUsedByMe == "X-Defense") sentAtkStage = myPokemon.stageDef; // Send in atk slot for generic sync
+            else if (lastMoveUsedByMe == "X-SpAttack") sentAtkStage = myPokemon.stageSpAtk;
+            else if (lastMoveUsedByMe == "X-SpDefense") sentAtkStage = myPokemon.stageSpDef;
+            
+            //X-Defense/SpDef technically boost *Defense*, but for the report
+            // we often just want to ensure the values get there. 
+            // However, the cleanest way is to just send the raw stage that changed.
+        }
+
 
         // Send report
         if (networkManager != null)
@@ -445,37 +461,37 @@ public class BattleManager : MonoBehaviour
         // Know the move category to update right stats
         string relevantMove = isMe ? lastMoveUsedByMe : pendingMoveName;
 
-        if (!string.IsNullOrEmpty(relevantMove) && MoveLoader.Moves.ContainsKey(relevantMove.ToLower()))
+        if (!string.IsNullOrEmpty(relevantMove))
         {
-            MoveData move = MoveLoader.Moves[relevantMove.ToLower()];
-            
-            if (move.category == "Physical")
+            string moveKey = relevantMove.ToLower();
+
+            // SCENARIO A: It is a standard Move (Tackle, Growl, etc.)
+            if (MoveLoader.Moves.ContainsKey(moveKey))
             {
-                // Sync physical stats
-                if (attackerMon.stageAtk != remoteAtkStage) 
+                MoveData move = MoveLoader.Moves[moveKey];
+                
+                if (move.category == "Physical")
                 {
-                    Debug.LogWarning($"Syncing {attackerMon.name} Atk: {attackerMon.stageAtk} -> {remoteAtkStage}");
-                    attackerMon.stageAtk = remoteAtkStage;
+                    if (attackerMon.stageAtk != remoteAtkStage) attackerMon.stageAtk = remoteAtkStage;
+                    if (defenderMon.stageDef != remoteDefStage) defenderMon.stageDef = remoteDefStage;
                 }
-                if (defenderMon.stageDef != remoteDefStage) 
+                else if (move.category == "Special")
                 {
-                    Debug.LogWarning($"Syncing {defenderMon.name} Def: {defenderMon.stageDef} -> {remoteDefStage}");
-                    defenderMon.stageDef = remoteDefStage;
+                    if (attackerMon.stageSpAtk != remoteAtkStage) attackerMon.stageSpAtk = remoteAtkStage;
+                    if (defenderMon.stageSpDef != remoteDefStage) defenderMon.stageSpDef = remoteDefStage;
                 }
             }
-            else if (move.category == "Special")
+            // SCENARIO B: It is an Item (X-Attack, X-Defense, etc.)
+            // We packed the boosted stat into 'remoteAtkStage' in OnDefenseAnnounceReceived
+            else if (relevantMove.StartsWith("X-"))
             {
-                // Sync special stats
-                if (attackerMon.stageSpAtk != remoteAtkStage) 
-                {
-                    Debug.LogWarning($"Syncing {attackerMon.name} SpAtk: {attackerMon.stageSpAtk} -> {remoteAtkStage}");
-                    attackerMon.stageSpAtk = remoteAtkStage;
-                }
-                if (defenderMon.stageSpDef != remoteDefStage) 
-                {
-                    Debug.LogWarning($"Syncing {defenderMon.name} SpDef: {defenderMon.stageSpDef} -> {remoteDefStage}");
-                    defenderMon.stageSpDef = remoteDefStage;
-                }
+                if (relevantMove == "X-Attack") attackerMon.stageAtk = remoteAtkStage;
+                else if (relevantMove == "X-Defense") attackerMon.stageDef = remoteAtkStage;
+                else if (relevantMove == "X-SpAttack") attackerMon.stageSpAtk = remoteAtkStage;
+                else if (relevantMove == "X-SpDefense") attackerMon.stageSpDef = remoteAtkStage;
+                else if (relevantMove == "X-Speed") attackerMon.stageSpeed = remoteAtkStage;
+                
+                Debug.Log($"[Item Sync] Updated {attackerMon.name} {relevantMove} -> {remoteAtkStage}");
             }
         }
     if (isGameOver) return;
@@ -905,31 +921,41 @@ public class BattleManager : MonoBehaviour
     Spectator‑only helper: shove the live names + HP/maxHP from the host
     into our local copies, then refresh the UI so the view stays honest.
     */
-    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string realHostName, string realJoinerName)
+    public void ForceUpdateSpectatorView(string hName, int hHp, int hMax, string cName, int cHp, int cMax, string realHostName, string realJoinerName, string hStats, string cStats)
     {
         spectatorP1Name = realHostName;
         spectatorP2Name = realJoinerName;
-        // 1. Host Side (Player 1)
-        // If the name is different (or null), load the Pokemon data from DB
-        if (myPokemon == null || myPokemon.name != hName)
-        {
-            myPokemon = PokemonDatabase.GetPokemon(hName); 
-        }
-        //Overwrite the DB values with the Live values from the packet
+
+        // 1. Host Side
+        if (myPokemon == null || myPokemon.name != hName) myPokemon = PokemonDatabase.GetPokemon(hName);
         myPokemon.hp = hHp;
         myPokemon.maxHp = hMax;
+        ApplySpectatorStats(myPokemon, hStats); // Apply Stats
 
-        // 2. Client Side (Player 2)
-        if (enemyPokemon == null || enemyPokemon.name != cName)
-        {
-            enemyPokemon = PokemonDatabase.GetPokemon(cName);
-        }
-        // CRITICAL FIX: Overwrite the DB values with the Live values
+        // 2. Client Side
+        if (enemyPokemon == null || enemyPokemon.name != cName) enemyPokemon = PokemonDatabase.GetPokemon(cName);
         enemyPokemon.hp = cHp;
         enemyPokemon.maxHp = cMax;
+        ApplySpectatorStats(enemyPokemon, cStats); // Apply Stats
 
-        // 3. Now update the Visuals (Sliders/Texts) using this corrected data
         UpdateBattleUI();
+        
+        // Also update the Stats Panel if it's open
+        if (panelStats != null && panelStats.activeSelf) UpdateStatDisplay();
+    }
+
+    private void ApplySpectatorStats(Pokemon p, string raw)
+    {
+        if (string.IsNullOrEmpty(raw) || p == null) return;
+        string[] parts = raw.Split(',');
+        if (parts.Length >= 5)
+        {
+            int.TryParse(parts[0], out p.stageAtk);
+            int.TryParse(parts[1], out p.stageDef);
+            int.TryParse(parts[2], out p.stageSpAtk);
+            int.TryParse(parts[3], out p.stageSpDef);
+            int.TryParse(parts[4], out p.stageSpeed);
+        }
     }
 
     // 2. Add this helper to send the data,, only Host can run this
@@ -943,7 +969,9 @@ public class BattleManager : MonoBehaviour
             networkManager.SendSpectatorSync(
             myPokemon.name, myPokemon.hp, myPokemon.maxHp,
             enemyPokemon.name, enemyPokemon.hp, enemyPokemon.maxHp,
-            myUsername, enemyUsername
+            myUsername, enemyUsername,
+            GetStatString(myPokemon),   // Host Stats
+            GetStatString(enemyPokemon) // Joiner Stats
             );
         }
     }
@@ -1357,8 +1385,8 @@ public class BattleManager : MonoBehaviour
         // 3. Log & Commit
         string itemName = $"X-{statName}";
         
-        // Use "Used Item" to pass the turn
-        CommitAction("used-item", 9999, false); 
+        CommitAction(itemName, 9999, false); 
+        
         ShowMainMenu();
     }
 
@@ -1753,5 +1781,11 @@ public class BattleManager : MonoBehaviour
         {
             Debug.Log(message);
         }
+    }
+
+    private string GetStatString(Pokemon p)
+    {
+        if (p == null) return "0,0,0,0,0";
+        return $"{p.stageAtk},{p.stageDef},{p.stageSpAtk},{p.stageSpDef},{p.stageSpeed}";
     }
 }
