@@ -7,6 +7,10 @@ A multiplayer turn-based Pokemon battle game built with Unity, featuring UDP net
 
 This project is a real-time multiplayer Pokemon battle simulator where players can battle each other over a local network with up to 6 Pokemon on their team. The game implements core Pokemon mechanics including type effectiveness, stat stages, status conditions, and turn-based combat.
 
+## AI Disclaimer
+
+The game logic, protocol architecture, and UI were designed by our group with the assistance of AI tools, including image generators and Gemini. We utilized these tools for technical guidance on Unity UI development and for sourcing CSV data. Furthermore, AI was heavily employed for debugging during our rigorous playtesting phase to ensure stability. Additional features, such as the Pokédex system and complex Status Effects, were implemented at our own discretion to enhance gameplay depth. While AI assisted in generating code documentation, we maintain full understanding and ownership of our codebase, particularly the custom UDP protocol and its reliability layer.
+
 ## Features
 
 ### Core Protocol Implementation 
